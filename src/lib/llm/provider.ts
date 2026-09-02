@@ -35,7 +35,7 @@ export async function createLLMProvider(): Promise<LLMProvider> {
       const model = options.model || DEFAULT_CHAT_MODEL;
 
       if (env.AI) {
-        const response = (await env.AI.run(model as keyof AiModels, {
+        const response = (await env.AI.run(model as Parameters<Ai["run"]>[0], {
           messages: messages.map((m) => ({ role: m.role, content: m.content })),
           temperature: options.temperature ?? 0.3,
           max_tokens: options.maxTokens ?? 1024,

@@ -24,8 +24,8 @@ export function ProceduresManager({ agentId }: { agentId: string }) {
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/procedures?agentId=${agentId}`);
-    const data = await res.json();
-    setProcedures(data.procedures || []);
+    const data = (await res.json()) as Record<string, unknown>;
+    setProcedures((data.procedures as Procedure[]) || []);
   }, [agentId]);
 
   useEffect(() => {
@@ -52,8 +52,8 @@ export function ProceduresManager({ agentId }: { agentId: string }) {
           steps: stepList,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed");
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Failed");
       toast.success("Procedure created");
       setName("");
       setTriggerText("");

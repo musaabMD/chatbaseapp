@@ -41,8 +41,8 @@ export function WorkspaceSettingsForm(props: WorkspaceSettingsProps) {
           brandColors: { primary: primaryColor },
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Save failed");
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Save failed");
       toast.success("Workspace updated");
       router.refresh();
     } catch (error) {

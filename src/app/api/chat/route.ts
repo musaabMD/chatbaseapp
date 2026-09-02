@@ -43,7 +43,10 @@ export async function POST(req: Request) {
             .bind(body.agentId)
             .all<{ domain: string }>();
           const list = allowed.results || [];
-          if (list.length > 0 && !list.some((d) => host === d.domain || host.endsWith(`.${d.domain}`))) {
+          if (
+            list.length > 0 &&
+            !list.some((d: { domain: string }) => host === d.domain || host.endsWith(`.${d.domain}`))
+          ) {
             return NextResponse.json({ error: "Origin not allowed" }, { status: 403 });
           }
         } catch {

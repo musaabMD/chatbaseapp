@@ -25,10 +25,10 @@ export default function SignupPage() {
         password: fd.get("password"),
       }),
     });
-    const data = await res.json();
+    const data = (await res.json()) as Record<string, unknown>;
     setLoading(false);
     if (!res.ok) {
-      toast.error(data.error || "Signup failed");
+      toast.error((typeof data.error === "string" ? data.error : undefined) || "Signup failed");
       return;
     }
     toast.success("Account created");

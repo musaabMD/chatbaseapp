@@ -24,10 +24,10 @@ export default function LoginPage() {
         password: fd.get("password"),
       }),
     });
-    const data = await res.json();
+    const data = (await res.json()) as Record<string, unknown>;
     setLoading(false);
     if (!res.ok) {
-      toast.error(data.error || "Login failed");
+      toast.error((typeof data.error === "string" ? data.error : undefined) || "Login failed");
       return;
     }
     router.push("/dashboard");

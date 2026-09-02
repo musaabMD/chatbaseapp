@@ -124,7 +124,7 @@ Return plain Markdown. Do not invent sources.`;
   const result = await llm.generate(
     [
       { role: "system", content: system },
-      ...orderedHistory.map((m) => ({
+      ...orderedHistory.map((m: { role: string; content: string }) => ({
         role: m.role as "user" | "assistant" | "system",
         content: m.content,
       })),

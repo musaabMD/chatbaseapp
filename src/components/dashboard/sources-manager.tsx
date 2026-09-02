@@ -31,8 +31,8 @@ export function SourcesManager({ agentId }: { agentId: string }) {
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/sources?agentId=${agentId}`);
-    const data = await res.json();
-    setSources(data.sources || []);
+    const data = (await res.json()) as Record<string, unknown>;
+    setSources((data.sources as Source[]) || []);
     setLoading(false);
   }, [agentId]);
 
@@ -50,8 +50,8 @@ export function SourcesManager({ agentId }: { agentId: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: "website", agentId, url: websiteUrl.trim() }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed");
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Failed");
       toast.success("Website source added and training started");
       setWebsiteUrl("");
       await load();
@@ -77,8 +77,8 @@ export function SourcesManager({ agentId }: { agentId: string }) {
           content: textContent.trim(),
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed");
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Failed");
       toast.success("Text source added");
       setTextTitle("");
       setTextContent("");
@@ -105,8 +105,8 @@ export function SourcesManager({ agentId }: { agentId: string }) {
           pairs: [{ question: qaQuestion.trim(), answer: qaAnswer.trim() }],
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed");
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Failed");
       toast.success("Q&A pair added");
       setQaName("");
       setQaQuestion("");

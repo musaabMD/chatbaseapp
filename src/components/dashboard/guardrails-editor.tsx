@@ -36,8 +36,8 @@ export function GuardrailsEditor({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: agentId, guardrails: parsed }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Save failed");
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Save failed");
       toast.success("Guardrails saved");
       router.refresh();
     } catch (error) {

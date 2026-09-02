@@ -65,8 +65,8 @@ export async function POST(req: Request) {
 export async function PATCH(req: Request) {
   try {
     const { workspace } = await requireWorkspace();
-    const body = await req.json();
-    const id = body.id as string;
+    const body = (await req.json()) as Record<string, unknown>;
+    const id = String(body.id || "");
     if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
     const db = await getDb();
 

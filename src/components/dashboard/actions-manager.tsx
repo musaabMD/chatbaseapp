@@ -27,8 +27,8 @@ export function ActionsManager({ agentId }: { agentId: string }) {
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/actions?agentId=${agentId}`);
-    const data = await res.json();
-    setActions(data.actions || []);
+    const data = (await res.json()) as Record<string, unknown>;
+    setActions((data.actions as Action[]) || []);
   }, [agentId]);
 
   useEffect(() => {
@@ -50,8 +50,8 @@ export function ActionsManager({ agentId }: { agentId: string }) {
           config: { url: url.trim(), method },
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed");
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Failed");
       toast.success("Action created");
       setName("");
       setUrl("");

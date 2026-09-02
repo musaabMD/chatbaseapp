@@ -1,36 +1,75 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Campusly
 
-## Getting Started
+Education-focused AI assistant platform (Chatbase-class product category) built Cloudflare-first.
 
-First, run the development server:
+Institutions create assistants, train them on websites/files/Q&A, configure behavior and actions, test in a playground, and deploy a floating website widget or hosted assistant page.
+
+## Stack
+
+- **Frontend:** Next.js (App Router), React, TypeScript, Tailwind CSS
+- **Deploy:** Cloudflare Workers via OpenNext (`@opennextjs/cloudflare`)
+- **Data:** Cloudflare D1, R2, KV, Vectorize, Queues, Workers AI
+- **Web knowledge:** Context.dev (`ContextProvider` abstraction)
+- **Models:** Provider abstraction (`LLMProvider`) — Workers AI + OpenAI-ready
+
+## Product surfaces
+
+- Marketing + auth + guided education onboarding
+- Multi-tenant workspaces
+- Assistant builder (instructions, knowledge, actions, procedures, guardrails, tests)
+- Playground with retrieval debug
+- Inbox, contacts, analytics, usage, billing stubs
+- Embeddable `public/widget.js` + hosted `/a/[slug]` page
+- Domain allowlisting for widget embeds
+
+## Local development
 
 ```bash
+npm install
+cp .dev.vars.example .dev.vars
+# Optional: CONTEXT_DEV_API_KEY, OPENAI_API_KEY, AUTH_SECRET
+
+npx wrangler d1 migrations apply campusly-db --local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Preview in the Workers runtime:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm run preview
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Cloudflare deploy
 
-## Learn More
+1. Authenticate Wrangler (`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`).
+2. Create resources:
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npx wrangler d1 create campusly-db
+npx wrangler r2 bucket create campusly-files
+npx wrangler kv namespace create campusly-kv
+npx wrangler vectorize create campusly-knowledge --dimensions=768 --metric=cosine
+npx wrangler queues create campusly-ingestion
+npx wrangler queues create campusly-analytics
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+3. Update `wrangler.jsonc` IDs.
+4. Apply migrations: `npx wrangler d1 migrations apply campusly-db --remote`
+5. Set secrets: `AUTH_SECRET`, `CONTEXT_DEV_API_KEY`, optional `OPENAI_API_KEY`
+6. Deploy: `npm run deploy`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Widget install
 
-## Deploy on Vercel
+```html
+<script
+  src="https://YOUR_DOMAIN/widget.js"
+  data-agent-id="agent_xxx"
+  async>
+</script>
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Browser API: `window.campusly.open()`, `.close()`, `.toggle()`, `.sendMessage()`, `.identify()`, `.setContext()`.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Brand
+
+**Campusly** — teal academic system (`#0C5C4C`), Fraunces + Manrope, education-native copy and workflows.

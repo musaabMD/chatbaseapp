@@ -71,17 +71,22 @@ export default async function DashboardHome() {
             {(recent.results || []).length === 0 && (
               <p className="text-sm text-[var(--muted)]">No conversations yet. Publish an assistant and share the widget.</p>
             )}
-            {(recent.results || []).map((row) => (
+            {((recent.results || []) as Array<{
+              id: string;
+              topic: string | null;
+              status: string;
+              agent_name: string;
+            }>).map((row) => (
               <Link
-                key={row.id as string}
+                key={row.id}
                 href={`/dashboard/inbox/${row.id}`}
                 className="flex items-center justify-between rounded-xl border border-[var(--border)] bg-white/70 px-3 py-3 hover:bg-white"
               >
                 <div>
-                  <div className="text-sm font-medium">{(row.topic as string) || "General"}</div>
-                  <div className="text-xs text-[var(--muted)]">{row.agent_name as string}</div>
+                  <div className="text-sm font-medium">{row.topic || "General"}</div>
+                  <div className="text-xs text-[var(--muted)]">{row.agent_name}</div>
                 </div>
-                <Badge>{row.status as string}</Badge>
+                <Badge>{row.status}</Badge>
               </Link>
             ))}
           </CardContent>

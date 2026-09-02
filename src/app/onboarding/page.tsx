@@ -42,15 +42,15 @@ export default function OnboardingPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(form),
     });
-    const data = await res.json();
+    const data = (await res.json()) as Record<string, unknown>;
     setLoading(false);
     if (!res.ok) {
-      toast.error(data.error || "Onboarding failed");
+      toast.error((typeof data.error === "string" ? data.error : undefined) || "Onboarding failed");
       return;
     }
-    setBrandPreview(data.brand);
+    setBrandPreview(data.brand as typeof brandPreview);
     toast.success("Workspace ready");
-    router.push(`/dashboard/agents/${data.agentId}/sources?onboarding=1`);
+    router.push(`/dashboard/agents/${String(data.agentId)}/sources?onboarding=1`);
   }
 
   return (

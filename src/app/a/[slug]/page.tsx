@@ -1,9 +1,12 @@
+import type { CSSProperties } from "react";
 import { notFound } from "next/navigation";
 import { getAgentByPublicSlug } from "@/lib/agents";
 import { ChatPanel } from "@/components/chat/chat-panel";
 import { STARTER_QUESTIONS, type EducationUseCase } from "@/lib/education/templates";
 import { parseBranding } from "@/components/dashboard/branding-settings-form";
 import { parseWidgetConfig } from "@/components/dashboard/widget-deploy-client";
+
+export const dynamic = "force-dynamic";
 
 export default async function PublicAgentPage({
   params,
@@ -23,7 +26,7 @@ export default async function PublicAgentPage({
   return (
     <main
       className="flex min-h-screen flex-col"
-      style={{ "--widget-primary": primaryColor } as React.CSSProperties}
+      style={{ "--widget-primary": primaryColor } as CSSProperties}
     >
       <header className="border-b border-[var(--border)] bg-white/80 px-6 py-4 backdrop-blur">
         <div className="mx-auto flex max-w-3xl items-center gap-3">

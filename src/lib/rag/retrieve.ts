@@ -45,7 +45,11 @@ export async function indexTextContent(input: {
     await deleteChunkRows(existing.results || []);
   }
 
-  const vectors: VectorizeVector[] = [];
+  const vectors: Array<{
+    id: string;
+    values: number[];
+    metadata: Record<string, string>;
+  }> = [];
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i]!;
     const chunkId = createId("chk");
@@ -154,7 +158,7 @@ export async function retrieveChunks(input: {
       },
     });
 
-    return (matches.matches || []).map((m) => {
+    return (matches.matches || []).map((m: { id: string; score?: number; metadata?: Record<string, unknown> }) => {
       const meta = (m.metadata || {}) as Record<string, string>;
       return {
         id: m.id,
@@ -186,7 +190,14 @@ export async function retrieveChunks(input: {
       source_id: string;
     }>();
 
-  const scored = (rows.results || []).map((row) => ({
+  const scored = (rows.results || []).map((row: {
+    id: string;
+    text: string;
+    title: string | null;
+    url: string | null;
+    heading: string | null;
+    source_id: string;
+  }) => ({
     id: row.id,
     text: row.text,
     title: row.title,
@@ -196,7 +207,7 @@ export async function retrieveChunks(input: {
     score: lexicalScore(input.query, row.text),
   }));
 
-  return scored.sort((a, b) => b.score - a.score).slice(0, topK);
+  return scored.sort((a: RetrievedChunk, b: RetrievedChunk) => b.score - a.score).slice(0, topK);
 }
 
 function lexicalScore(query: string, text: string) {

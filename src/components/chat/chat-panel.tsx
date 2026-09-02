@@ -82,17 +82,17 @@ export function ChatPanel({
           public: isPublic || undefined,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Chat failed");
-      setConversationId(data.conversationId);
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Chat failed");
+      setConversationId(data.conversationId as string | undefined);
       setMessages((m) => [
         ...m,
         {
-          id: data.messageId,
+          id: String(data.messageId),
           role: "assistant",
-          content: data.content,
-          citations: data.citations,
-          structuredUi: data.structuredUi,
+          content: String(data.content || ""),
+          citations: data.citations as ChatMessageView["citations"],
+          structuredUi: data.structuredUi as ChatMessageView["structuredUi"],
         },
       ]);
       onDebug?.(data);

@@ -40,14 +40,14 @@ export type ContextProvider = {
 
 function createHttpClient(apiKey: string) {
   const base = "https://api.context.dev/v1";
-  async function request<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  async function request<T>(path: string, body: Record<string, unknown>, method: "POST" | "GET" = "POST"): Promise<T> {
     const res = await fetch(`${base}${path}`, {
-      method: "POST",
+      method,
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(body),
+      body: method === "POST" ? JSON.stringify(body) : undefined,
     });
     if (!res.ok) {
       const text = await res.text();
@@ -72,66 +72,69 @@ export async function createContextProvider(): Promise<ContextProvider> {
   const sdk = new ContextDev({ apiKey });
   const http = createHttpClient(apiKey);
 
-  return {
+  const provider: ContextProvider = {
     async scrapeUrl(url) {
       const target = ensureUrl(url);
-      const result = await sdk.web.scrape.markdown({ url: target, useMainContentOnly: true });
+      const result = await sdk.web.webScrapeMd({
+        url: target,
+        useMainContentOnly: true,
+      });
       return { url: target, markdown: result.markdown || "" };
     },
 
     async getMarkdown(url) {
-      const scraped = await this.scrapeUrl(url);
+      const scraped = await provider.scrapeUrl(url);
       return scraped.markdown;
     },
 
     async crawlWebsite(options) {
       const target = ensureUrl(options.url);
       try {
-        const result = await http.request<{
-          pages?: Array<{ url: string; title?: string; markdown?: string; content?: string }>;
-          results?: Array<{ url: string; title?: string; markdown?: string }>;
-        }>("/web/crawl", {
+        const result = await sdk.web.webCrawlMd({
           url: target,
           maxPages: options.maxPages ?? 25,
           maxDepth: options.maxDepth ?? 2,
           urlRegex: options.urlRegex,
           useMainContentOnly: options.useMainContentOnly ?? true,
-          includeLinks: true,
         });
-
-        const pages = result.pages || result.results || [];
-        return pages.map((p) => ({
-          url: p.url,
-          title: p.title,
-          markdown: p.markdown || (p as { content?: string }).content || "",
-        }));
+        const pages = result.results || [];
+        return pages.map((p) => {
+          const row = p as unknown as {
+            url?: string;
+            title?: string;
+            markdown?: string | { markdown?: string | null };
+          };
+          const md = row.markdown;
+          return {
+            url: row.url || "",
+            title: row.title,
+            markdown: typeof md === "string" ? md : md?.markdown || "",
+          };
+        });
       } catch {
-        // Fallback: scrape homepage + try sitemap discovery
-        const markdown = await this.getMarkdown(target);
+        const markdown = await provider.getMarkdown(target);
         return [{ url: target, title: normalizeDomain(target), markdown }];
       }
     },
 
     async getSitemap(url) {
-      const target = ensureUrl(url);
+      const domain = normalizeDomain(url);
       try {
-        const result = await http.request<{ urls?: string[]; sitemap?: string[] }>(
-          "/web/sitemap",
-          { url: target },
-        );
-        return result.urls || result.sitemap || [];
+        const result = await sdk.web.webScrapeSitemap({ domain });
+        const urls = (result as { urls?: string[] }).urls || [];
+        return urls.length ? urls : [ensureUrl(url)];
       } catch {
-        return [target];
+        return [ensureUrl(url)];
       }
     },
 
-    async extractStructuredData<T>(url, schema) {
+    async extractStructuredData<T>(url: string, schema: Record<string, unknown>) {
       try {
-        const result = await http.request<{ data?: T }>("/web/extract", {
+        const result = await sdk.web.extract({
           url: ensureUrl(url),
-          schema,
+          schema: schema as never,
         });
-        return result.data ?? null;
+        return ((result as unknown as { data?: T }).data ?? (result as unknown as T));
       } catch {
         return null;
       }
@@ -139,10 +142,12 @@ export async function createContextProvider(): Promise<ContextProvider> {
 
     async getScreenshot(url) {
       try {
-        const result = await http.request<{ url?: string; image?: string }>("/web/screenshot", {
-          url: ensureUrl(url),
-        });
-        return { url: result.url, base64: result.image };
+        const result = await sdk.web.screenshot({ domain: normalizeDomain(url) });
+        return {
+          url: (result as { url?: string }).url,
+          base64: (result as { image?: string; screenshot?: string }).image
+            || (result as { screenshot?: string }).screenshot,
+        };
       } catch {
         return null;
       }
@@ -161,7 +166,7 @@ export async function createContextProvider(): Promise<ContextProvider> {
     async getStyleguide(domainOrUrl) {
       const domain = normalizeDomain(domainOrUrl);
       try {
-        return await http.request("/brand/styleguide", { domain });
+        return await sdk.web.extractStyleguide({ domain });
       } catch {
         return null;
       }
@@ -178,10 +183,12 @@ export async function createContextProvider(): Promise<ContextProvider> {
       }
     },
   };
+
+  return provider;
 }
 
 function createMockContextProvider(): ContextProvider {
-  return {
+  const provider: ContextProvider = {
     async scrapeUrl(url) {
       const domain = normalizeDomain(url);
       return {
@@ -216,7 +223,7 @@ function createMockContextProvider(): ContextProvider {
       ].slice(0, options.maxPages ?? 25);
     },
     async getMarkdown(url) {
-      return (await this.scrapeUrl(url)).markdown;
+      return (await provider.scrapeUrl(url)).markdown;
     },
     async getSitemap(url) {
       const base = ensureUrl(url).replace(/\/$/, "");
@@ -251,4 +258,5 @@ function createMockContextProvider(): ContextProvider {
       return [];
     },
   };
+  return provider;
 }

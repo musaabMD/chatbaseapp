@@ -40,8 +40,8 @@ export function WidgetDeployClient({
 
   const loadDomains = useCallback(async () => {
     const res = await fetch(`/api/domains?agentId=${agentId}`);
-    const data = await res.json();
-    setDomains(data.domains || []);
+    const data = (await res.json()) as Record<string, unknown>;
+    setDomains((data.domains as Domain[]) || []);
   }, [agentId]);
 
   useEffect(() => {
@@ -58,8 +58,8 @@ export function WidgetDeployClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ agentId, domain: newDomain.trim() }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed");
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Failed");
       toast.success("Domain added");
       setNewDomain("");
       await loadDomains();
@@ -83,8 +83,8 @@ export function WidgetDeployClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: agentId, widget_config: config }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Save failed");
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Save failed");
       toast.success("Widget config saved");
       router.refresh();
     } catch (error) {

@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { getSessionContext } from "@/lib/auth";
 import { Sidebar } from "@/components/dashboard/sidebar";
 
+export const dynamic = "force-dynamic";
+
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await getSessionContext();
   if (!session?.user) redirect("/login");

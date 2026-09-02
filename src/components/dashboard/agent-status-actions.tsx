@@ -23,8 +23,8 @@ export function AgentStatusActions({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: agentId, status: newStatus }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Update failed");
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Update failed");
       toast.success(newStatus === "active" ? "Assistant published" : "Assistant paused");
       router.refresh();
     } catch (error) {

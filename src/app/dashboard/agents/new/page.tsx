@@ -39,10 +39,10 @@ export default function NewAgentPage() {
           audience: form.audience || undefined,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Create failed");
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Create failed");
       toast.success("Assistant created");
-      router.push(`/dashboard/agents/${data.id}`);
+      router.push(`/dashboard/agents/${String(data.id)}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Create failed");
     } finally {

@@ -30,7 +30,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const { workspace } = await requireWorkspace();
-    const body = await req.json();
+    const body = (await req.json()) as Record<string, unknown>;
     const type = body.type as string;
 
     if (type === "website") {
