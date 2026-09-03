@@ -22,22 +22,20 @@ Institutions create assistants, train them on websites/files/Q&A, configure beha
 - Embeddable `public/widget.js` + hosted `/a/[slug]` page
 - Domain allowlisting for widget embeds
 
-## Local development
+## Local development (no Cloudflare login)
 
 ```bash
 npm install
-cp .dev.vars.example .dev.vars
-# Optional: CONTEXT_DEV_API_KEY, OPENAI_API_KEY, AUTH_SECRET
-
-npx wrangler d1 migrations apply campusly-db --local
 npm run dev
 ```
 
-Preview in the Workers runtime:
+Open http://localhost:3000
 
-```bash
-npm run preview
-```
+This uses a local SQLite database in `.data/` — no `wrangler login`, no OAuth, no Workers preview.
+
+Do **not** run `npx wrangler login` or `npm run preview` just to click through the UI. Those open Cloudflare OAuth (`localhost:8976`) which fails in this remote environment.
+
+Optional: set `CONTEXT_DEV_API_KEY` / `OPENAI_API_KEY` in `.dev.vars` for real crawling/LLM. Without them, mock knowledge + fallback answers still work.
 
 ## Cloudflare deploy
 
