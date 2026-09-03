@@ -26,6 +26,8 @@ export default async function WorkspaceAnalyticsPage({
     byTopic,
     bySentiment,
     escalationReasons,
+    actionAgg,
+    actionByName,
   ] = await Promise.all([
     db
       .prepare(`SELECT COUNT(*) as c FROM conversations WHERE workspace_id = ? AND created_at >= ?`)
@@ -77,6 +79,25 @@ export default async function WorkspaceAnalyticsPage({
       )
       .bind(workspace.id, since)
       .all<{ reason: string; c: number }>(),
+    db
+      .prepare(
+        `SELECT COUNT(*) as total,
+                SUM(CASE WHEN status = 'success' OR status = 'completed' THEN 1 ELSE 0 END) as ok,
+                SUM(CASE WHEN status = 'failed' OR status = 'error' THEN 1 ELSE 0 END) as failed,
+                SUM(CASE WHEN requires_confirmation = 1 THEN 1 ELSE 0 END) as needs_confirm
+         FROM action_executions WHERE workspace_id = ? AND created_at >= ?`,
+      )
+      .bind(workspace.id, since)
+      .first<{ total: number; ok: number; failed: number; needs_confirm: number }>(),
+    db
+      .prepare(
+        `SELECT name, COUNT(*) as c,
+                SUM(CASE WHEN status = 'success' OR status = 'completed' THEN 1 ELSE 0 END) as ok
+         FROM action_executions WHERE workspace_id = ? AND created_at >= ?
+         GROUP BY name ORDER BY c DESC LIMIT 8`,
+      )
+      .bind(workspace.id, since)
+      .all<{ name: string; c: number; ok: number }>(),
   ]);
 
   const prevSince = new Date(Date.now() - days * 2 * 24 * 60 * 60 * 1000).toISOString();
@@ -156,6 +177,13 @@ export default async function WorkspaceAnalyticsPage({
           : "—",
     },
     { label: "Leads", value: leads?.c ?? 0 },
+    { label: "Actions run", value: actionAgg?.total ?? 0 },
+    {
+      label: "Action success",
+      value: actionAgg?.total
+        ? `${Math.round(((actionAgg.ok || 0) / actionAgg.total) * 100)}%`
+        : "—",
+    },
   ];
 
   const ranges = [
@@ -292,6 +320,43 @@ export default async function WorkspaceAnalyticsPage({
             <Link href="/dashboard/inbox?filter=escalated" className="text-sm text-[var(--primary)] hover:underline">
               Open escalated inbox →
             </Link>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Action executions</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <div className="flex justify-between text-sm">
+              <span>Succeeded</span>
+              <span className="font-medium">{actionAgg?.ok ?? 0}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span>Failed</span>
+              <span className="font-medium">{actionAgg?.failed ?? 0}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span>Needed confirmation</span>
+              <span className="font-medium">{actionAgg?.needs_confirm ?? 0}</span>
+            </div>
+            {(actionByName.results || []).length === 0 ? (
+              <p className="pt-2 text-sm text-[var(--muted)]">No actions recorded yet.</p>
+            ) : (
+              <div className="mt-3 border-t border-[var(--border)] pt-3 space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+                  By action
+                </div>
+                {(actionByName.results || []).map((row) => (
+                  <div key={row.name} className="flex justify-between text-sm">
+                    <span>{row.name}</span>
+                    <span className="font-medium">
+                      {row.c} · {row.ok} ok
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 

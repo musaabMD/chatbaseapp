@@ -3,6 +3,7 @@ import { getDb } from "@/lib/cloudflare";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/card";
 import { SUPPORTED_CHANNELS } from "@/lib/agent/channels";
+import { IntegrationConnectButton } from "@/components/dashboard/integration-connect-button";
 
 const AVAILABLE = [
   { type: "shopify", name: "Shopify", category: "Commerce", description: "Orders, products, and refunds." },
@@ -30,9 +31,7 @@ export default async function IntegrationsPage() {
     .bind(workspace.id)
     .all<{ type: string; name: string; status: string }>();
 
-  const connectedMap = new Map(
-    (connected.results || []).map((i) => [i.type, i]),
-  );
+  const connectedMap = new Map((connected.results || []).map((i) => [i.type, i]));
 
   return (
     <div className="space-y-6 p-6 md:p-8">
@@ -41,8 +40,7 @@ export default async function IntegrationsPage() {
           Integrations
         </h1>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Prebuilt connectors and channel adapters. Custom HTTP actions cover anything without an official connector.
-          OAuth credential vault wiring comes next — catalog + escalation adapters are ready.
+          Connect mock adapters to exercise escalation handoff payloads. Live OAuth replaces mock tokens later.
         </p>
       </div>
 
@@ -50,7 +48,7 @@ export default async function IntegrationsPage() {
         <CardHeader>
           <CardTitle className="text-base">Supported channels (runtime)</CardTitle>
           <CardDescription>
-            One agent runtime — adapters normalize inbound events via <code>/api/channels/ingest</code>.
+            One agent runtime — adapters normalize inbound events via <code>/api/channels/ingest</code> and webhooks.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
@@ -63,6 +61,7 @@ export default async function IntegrationsPage() {
       <div className="grid gap-4 sm:grid-cols-2">
         {AVAILABLE.map((item) => {
           const existing = connectedMap.get(item.type);
+          const isConnected = existing?.status === "connected";
           return (
             <Card key={item.type}>
               <CardHeader>
@@ -73,20 +72,14 @@ export default async function IntegrationsPage() {
                     </div>
                     <CardTitle className="text-base">{item.name}</CardTitle>
                   </div>
-                  <Badge
-                    className={
-                      existing?.status === "connected" ? "bg-[var(--primary)] text-white" : undefined
-                    }
-                  >
+                  <Badge className={isConnected ? "bg-[var(--primary)] text-white" : undefined}>
                     {existing?.status || "available"}
                   </Badge>
                 </div>
                 <CardDescription>{item.description}</CardDescription>
               </CardHeader>
               <CardContent>
-                <p className="text-xs text-[var(--muted)]">
-                  Adapter stub records outbound escalation events. Connect OAuth in a follow-up.
-                </p>
+                <IntegrationConnectButton type={item.type} connected={Boolean(isConnected)} />
               </CardContent>
             </Card>
           );

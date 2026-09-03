@@ -22,6 +22,7 @@ import { escalateConversation } from "@/lib/agent/escalation";
 import { saveAgentTrace } from "@/lib/agent/traces";
 import { classifyTopic, classifySentiment, detectLanguage } from "@/lib/agent/classify";
 import { recordConversationSignals } from "@/lib/agent/knowledge-gaps";
+import { recordUsage } from "@/lib/agent/usage";
 
 export type ChatCitation = {
   title: string;
@@ -49,6 +50,7 @@ export async function runAgentTurn(input: {
   debug?: boolean;
   verifiedIdentity?: VerifiedIdentity | null;
   language?: string;
+  confirmed?: boolean;
 }) {
   const db = await getDb();
   const agent = await db
@@ -131,6 +133,7 @@ export async function runAgentTurn(input: {
   });
 
   let conversationId = input.conversationId;
+  const isNewConversation = !conversationId;
   if (!conversationId) {
     conversationId = createId("conv");
     await db
@@ -270,6 +273,7 @@ export async function runAgentTurn(input: {
   let toolResultBlock = "";
   let orderWidget: StructuredUi | null = null;
   let commerceParts: MessagePart[] = [];
+  let pendingConfirmation: { action: string; executionId?: string; message: string } | null = null;
   const intent = detectActionIntent(input.message, actions);
   if (intent) {
     const result = await executeAction({
@@ -280,6 +284,7 @@ export async function runAgentTurn(input: {
       args: intent.args,
       verifiedIdentity: input.verifiedIdentity,
       guardrails: rules,
+      confirmed: input.confirmed,
     });
     if (result.ok) {
       toolResultBlock = `\nTool result (${intent.action.slug}):\n${JSON.stringify(result.output, null, 2)}`;
@@ -302,6 +307,11 @@ export async function runAgentTurn(input: {
         commerceParts = result.parts as MessagePart[];
       }
     } else if (result.needsConfirmation) {
+      pendingConfirmation = {
+        action: intent.action.slug,
+        executionId: result.executionId,
+        message: result.error || "Confirmation required before running this action.",
+      };
       toolResultBlock = `\nAction ${intent.action.slug} requires confirmation before running.`;
     } else {
       toolResultBlock = `\nAction ${intent.action.slug} failed: ${result.error}`;
@@ -524,6 +534,14 @@ export async function runAgentTurn(input: {
     finalResponse: replyText,
   });
 
+  try {
+    await recordUsage(input.workspaceId, "messages", 2);
+    await recordUsage(input.workspaceId, "conversations_touched", isNewConversation ? 1 : 0);
+    if (intent) await recordUsage(input.workspaceId, "actions", 1);
+  } catch {
+    /* usage_records optional */
+  }
+
   return {
     conversationId,
     messageId: assistantMessageId,
@@ -537,6 +555,8 @@ export async function runAgentTurn(input: {
     retrieval: chunks,
     procedureRunId,
     traceId,
+    needsConfirmation: Boolean(pendingConfirmation),
+    confirmation: pendingConfirmation,
     starterQuestions: STARTER_QUESTIONS[agent.use_case] || STARTER_QUESTIONS.custom,
   };
 }

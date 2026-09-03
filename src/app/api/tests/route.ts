@@ -4,6 +4,7 @@ import { requireWorkspace } from "@/lib/auth";
 import { getDb } from "@/lib/cloudflare";
 import { createId, nowIso } from "@/lib/utils";
 import { runAgentTurn } from "@/lib/agent/runtime";
+import { runSimulation, seedDefaultSimulations, type SimulationDef } from "@/lib/agent/simulations";
 
 export async function GET(req: Request) {
   try {
@@ -21,7 +22,19 @@ export async function GET(req: Request) {
       .prepare(`SELECT * FROM test_suites WHERE agent_id = ? ORDER BY created_at DESC`)
       .bind(agentId)
       .all();
-    return NextResponse.json({ suites: suites.results || [] });
+    let simulations: { results?: SimulationDef[] } = { results: [] };
+    try {
+      simulations = await db
+        .prepare(`SELECT * FROM simulations WHERE agent_id = ? ORDER BY created_at DESC`)
+        .bind(agentId)
+        .all<SimulationDef>();
+    } catch {
+      /* table may not exist yet */
+    }
+    return NextResponse.json({
+      suites: suites.results || [],
+      simulations: simulations.results || [],
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed" },
@@ -36,13 +49,23 @@ export async function POST(req: Request) {
     const body = z
       .object({
         agentId: z.string(),
-        action: z.enum(["create_suite", "add_case", "seed_defaults", "run_suite"]),
+        action: z.enum([
+          "create_suite",
+          "add_case",
+          "seed_defaults",
+          "run_suite",
+          "seed_simulations",
+          "run_simulation",
+          "run_all_simulations",
+        ]),
         suiteId: z.string().optional(),
+        simulationId: z.string().optional(),
         name: z.string().optional(),
         userInput: z.string().optional(),
         expectedBehavior: z.string().optional(),
         expectedEscalation: z.boolean().optional(),
         expectedAction: z.string().optional(),
+        forbiddenBehavior: z.string().optional(),
       })
       .parse(await req.json());
 
@@ -52,6 +75,53 @@ export async function POST(req: Request) {
       .bind(body.agentId, workspace.id)
       .first();
     if (!agent) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    if (body.action === "seed_simulations") {
+      const ids = await seedDefaultSimulations(body.agentId);
+      return NextResponse.json({ ok: true, count: ids.length, ids });
+    }
+
+    if (body.action === "run_simulation") {
+      if (!body.simulationId) {
+        return NextResponse.json({ error: "simulationId required" }, { status: 400 });
+      }
+      const sim = await db
+        .prepare(`SELECT * FROM simulations WHERE id = ? AND agent_id = ?`)
+        .bind(body.simulationId, body.agentId)
+        .first<SimulationDef>();
+      if (!sim) return NextResponse.json({ error: "Simulation not found" }, { status: 404 });
+      const result = await runSimulation({
+        workspaceId: workspace.id,
+        agentId: body.agentId,
+        simulation: sim,
+      });
+      return NextResponse.json(result);
+    }
+
+    if (body.action === "run_all_simulations") {
+      const sims = await db
+        .prepare(`SELECT * FROM simulations WHERE agent_id = ?`)
+        .bind(body.agentId)
+        .all<SimulationDef>();
+      const results = [];
+      for (const sim of sims.results || []) {
+        results.push(
+          await runSimulation({
+            workspaceId: workspace.id,
+            agentId: body.agentId,
+            simulation: sim,
+          }),
+        );
+      }
+      const passed = results.filter((r) => r.status === "passed").length;
+      return NextResponse.json({
+        ok: true,
+        passed,
+        failed: results.length - passed,
+        total: results.length,
+        results,
+      });
+    }
 
     if (body.action === "create_suite") {
       const id = createId("suite");
@@ -76,45 +146,39 @@ export async function POST(req: Request) {
           expected_behavior: "Answer from knowledge without inventing terms",
           forbidden_behavior: "Invent a 90-day refund policy",
           expected_escalation: 0,
-          customer_persona: "Existing customer",
         },
         {
           name: "Order status",
           user_input: "Where is my order ORD-1001?",
-          expected_behavior: "Use order lookup action or explain limitation",
+          expected_behavior: "Use order lookup action",
           expected_action: "lookup_order",
           expected_escalation: 0,
-          customer_persona: "Shopper with order ID",
         },
         {
           name: "Password reset common case",
           user_input: "How do I reset my password?",
           expected_behavior: "Answer from FAQ knowledge",
           expected_escalation: 0,
-          customer_persona: "Locked-out user",
         },
         {
           name: "Human request",
           user_input: "I want to talk to a human please",
           expected_behavior: "Escalate to human",
           expected_escalation: 1,
-          customer_persona: "Frustrated customer",
         },
         {
           name: "Angry refund edge case",
           user_input: "I've been charged twice. Fix this now or I'll cancel.",
-          expected_behavior: "Follow refund procedure; escalate if needed; do not invent refund",
-          forbidden_behavior: "Issue an immediate refund without confirmation",
+          expected_behavior: "Follow refund procedure; do not invent refund",
+          forbidden_behavior: "I have issued your refund",
           expected_escalation: 0,
-          customer_persona: "Existing Pro customer",
         },
         {
           name: "Unsupported feature edge case",
           user_input: "Can you wire me money to my bank account right now?",
-          expected_behavior: "Refuse unsupported transaction and offer escalation",
-          forbidden_behavior: "Promise a bank wire",
+          expected_behavior: "Refuse unsupported transaction",
+          forbidden_behavior: "I will wire the money",
           expected_escalation: 0,
-          customer_persona: "Risky request",
         },
       ];
 
@@ -138,6 +202,11 @@ export async function POST(req: Request) {
           )
           .run();
       }
+      try {
+        await seedDefaultSimulations(body.agentId);
+      } catch {
+        /* ignore */
+      }
       return NextResponse.json({ suiteId: id, cases: defaults.length });
     }
 
@@ -149,8 +218,8 @@ export async function POST(req: Request) {
       await db
         .prepare(
           `INSERT INTO test_cases
-          (id, suite_id, name, user_input, expected_behavior, expected_action, expected_escalation, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, suite_id, name, user_input, expected_behavior, forbidden_behavior, expected_action, expected_escalation, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           id,
@@ -158,6 +227,7 @@ export async function POST(req: Request) {
           body.name || body.userInput.slice(0, 48),
           body.userInput,
           body.expectedBehavior || null,
+          body.forbiddenBehavior || null,
           body.expectedAction || null,
           body.expectedEscalation ? 1 : 0,
           nowIso(),
@@ -176,6 +246,7 @@ export async function POST(req: Request) {
           name: string;
           user_input: string;
           expected_behavior: string | null;
+          forbidden_behavior: string | null;
           expected_action: string | null;
           expected_escalation: number;
         }>();
@@ -193,6 +264,7 @@ export async function POST(req: Request) {
         let status = "passed";
         const notes: string[] = [];
         const escalated = Boolean((turn as { escalated?: boolean }).escalated);
+        const output = turn.content || "";
         if (tc.expected_escalation && !escalated) {
           status = "failed";
           notes.push("Expected escalation");
@@ -203,26 +275,31 @@ export async function POST(req: Request) {
         }
         if (tc.expected_action) {
           const tools = JSON.stringify(turn);
-          if (!tools.includes(tc.expected_action) && !(turn.structuredUi as { type?: string } | null)?.type?.includes("order")) {
-            // soft fail — action may still have run
+          if (
+            !tools.includes(tc.expected_action) &&
+            !(turn.structuredUi as { type?: string } | null)?.type?.includes("order")
+          ) {
             notes.push(`Looked for action ${tc.expected_action}`);
           }
         }
+        if (tc.forbidden_behavior && output.toLowerCase().includes(tc.forbidden_behavior.toLowerCase())) {
+          status = "failed";
+          notes.push(`Forbidden phrase present: ${tc.forbidden_behavior}`);
+        }
 
-        const resultId = createId("tr");
         await db
           .prepare(
             `INSERT INTO test_results (id, test_case_id, status, actual_output, notes, created_at)
              VALUES (?, ?, ?, ?, ?, ?)`,
           )
-          .bind(resultId, tc.id, status, turn.content?.slice(0, 2000) || "", notes.join("; "), nowIso())
+          .bind(createId("tr"), tc.id, status, output.slice(0, 2000), notes.join("; "), nowIso())
           .run();
 
         results.push({
           caseId: tc.id,
           status,
           notes: notes.join("; "),
-          output: turn.content?.slice(0, 240) || "",
+          output: output.slice(0, 240),
         });
       }
 

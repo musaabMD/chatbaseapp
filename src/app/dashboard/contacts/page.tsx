@@ -52,9 +52,10 @@ export default async function ContactsPage() {
               program_interest: string | null;
               conversation_count: number;
             }) => (
-              <div
+              <Link
                 key={c.id}
-                className="flex items-center justify-between rounded-xl border border-[var(--border)] bg-white/70 px-4 py-3"
+                href={`/dashboard/contacts/${c.id}`}
+                className="flex items-center justify-between rounded-xl border border-[var(--border)] bg-white/70 px-4 py-3 hover:bg-white"
               >
                 <div>
                   <div className="text-sm font-medium">{c.name || c.email || "Anonymous"}</div>
@@ -64,7 +65,7 @@ export default async function ContactsPage() {
                   </div>
                 </div>
                 <Badge>{c.type}</Badge>
-              </div>
+              </Link>
             ))
           )}
         </CardContent>

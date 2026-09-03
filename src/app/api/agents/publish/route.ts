@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireWorkspace } from "@/lib/auth";
-import { publishAgentVersion } from "@/lib/agent/versions";
+import { publishAgentVersion, rollbackAgentVersion } from "@/lib/agent/versions";
 import { getDb } from "@/lib/cloudflare";
 
 export async function POST(req: Request) {
@@ -12,6 +12,8 @@ export async function POST(req: Request) {
         agentId: z.string(),
         label: z.string().optional(),
         requirePassingTests: z.boolean().optional(),
+        action: z.enum(["publish", "rollback"]).optional(),
+        versionId: z.string().optional(),
       })
       .parse(await req.json());
 
@@ -21,6 +23,17 @@ export async function POST(req: Request) {
       .bind(body.agentId, workspace.id)
       .first();
     if (!agent) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+
+    if (body.action === "rollback") {
+      if (!body.versionId) {
+        return NextResponse.json({ error: "versionId required" }, { status: 400 });
+      }
+      const rolled = await rollbackAgentVersion({
+        agentId: body.agentId,
+        versionId: body.versionId,
+      });
+      return NextResponse.json(rolled);
+    }
 
     const version = await publishAgentVersion({
       agentId: body.agentId,
@@ -46,9 +59,9 @@ export async function GET(req: Request) {
 
     const db = await getDb();
     const agent = await db
-      .prepare(`SELECT id FROM agents WHERE id = ? AND workspace_id = ?`)
+      .prepare(`SELECT id, published_version_id FROM agents WHERE id = ? AND workspace_id = ?`)
       .bind(agentId, workspace.id)
-      .first();
+      .first<{ id: string; published_version_id: string | null }>();
     if (!agent) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
 
     const versions = await db
@@ -65,7 +78,11 @@ export async function GET(req: Request) {
       .bind(agentId)
       .all();
 
-    return NextResponse.json({ versions: versions.results || [], gates: gates.results || [] });
+    return NextResponse.json({
+      versions: versions.results || [],
+      gates: gates.results || [],
+      publishedVersionId: agent.published_version_id,
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed" },

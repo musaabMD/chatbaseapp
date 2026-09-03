@@ -17,6 +17,7 @@ const schema = z.object({
   identity: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
   verifiedIdentity: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
   language: z.string().optional(),
+  confirmed: z.boolean().optional(),
 });
 
 export async function POST(req: Request) {
@@ -73,6 +74,7 @@ export async function POST(req: Request) {
       channel: body.channel || (body.public ? "widget" : "playground"),
       verifiedIdentity,
       language: body.language,
+      confirmed: body.confirmed,
     });
 
     return NextResponse.json(result);

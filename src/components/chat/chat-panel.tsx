@@ -54,22 +54,29 @@ export function ChatPanel({
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [conversationId, setConversationId] = useState(initialConversationId);
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    action: string;
+    message: string;
+    lastUserText: string;
+  } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, busy]);
 
-  async function send(text: string) {
+  async function send(text: string, confirmed = false) {
     if (!text.trim() || busy) return;
     setBusy(true);
-    const userMsg: ChatMessageView = {
-      id: `local_${Date.now()}`,
-      role: "user",
-      content: text.trim(),
-    };
-    setMessages((m) => [...m, userMsg]);
-    setInput("");
+    if (!confirmed) {
+      const userMsg: ChatMessageView = {
+        id: `local_${Date.now()}`,
+        role: "user",
+        content: text.trim(),
+      };
+      setMessages((m) => [...m, userMsg]);
+      setInput("");
+    }
 
     try {
       const res = await fetch(apiPath, {
@@ -84,11 +91,24 @@ export function ChatPanel({
           pageTitle,
           channel,
           public: isPublic || undefined,
+          confirmed: confirmed || undefined,
         }),
       });
       const data = (await res.json()) as Record<string, unknown>;
       if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Chat failed");
       setConversationId(data.conversationId as string | undefined);
+
+      if (data.needsConfirmation && data.confirmation) {
+        const conf = data.confirmation as { action: string; message: string };
+        setPendingConfirm({
+          action: conf.action,
+          message: conf.message,
+          lastUserText: text.trim(),
+        });
+      } else {
+        setPendingConfirm(null);
+      }
+
       setMessages((m) => [
         ...m,
         {
@@ -122,6 +142,23 @@ export function ChatPanel({
     });
   }
 
+  async function confirmPending(ok: boolean) {
+    if (!pendingConfirm) return;
+    if (!ok) {
+      setPendingConfirm(null);
+      setMessages((m) => [
+        ...m,
+        {
+          id: `cancel_${Date.now()}`,
+          role: "assistant",
+          content: "Action cancelled. Tell me if you want to try something else.",
+        },
+      ]);
+      return;
+    }
+    await send(pendingConfirm.lastUserText, true);
+  }
+
   return (
     <div className={cn("flex h-full flex-col", className)}>
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
@@ -132,7 +169,7 @@ export function ChatPanel({
               {starterQuestions.map((q) => (
                 <button
                   key={q}
-                  onClick={() => send(q)}
+                  onClick={() => void send(q)}
                   className="rounded-full border border-[var(--border)] bg-white/80 px-3 py-1.5 text-left text-sm hover:bg-white"
                 >
                   {q}
@@ -245,6 +282,20 @@ export function ChatPanel({
         )}
         <div ref={endRef} />
       </div>
+      {pendingConfirm ? (
+        <div className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm">
+          <p className="font-medium text-amber-950">{pendingConfirm.message}</p>
+          <p className="mt-1 text-xs text-amber-800/80">Action: {pendingConfirm.action}</p>
+          <div className="mt-2 flex gap-2">
+            <Button size="sm" disabled={busy} onClick={() => void confirmPending(true)}>
+              Confirm
+            </Button>
+            <Button size="sm" variant="secondary" disabled={busy} onClick={() => void confirmPending(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <form
         className="flex gap-2 border-t border-[var(--border)] p-3"
         onSubmit={(e) => {
@@ -252,8 +303,13 @@ export function ChatPanel({
           void send(input);
         }}
       >
-        <Input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask about orders, policies, pricing…" />
-        <Button type="submit" disabled={busy}>
+        <Input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Ask about orders, policies, pricing…"
+          disabled={Boolean(pendingConfirm)}
+        />
+        <Button type="submit" disabled={busy || Boolean(pendingConfirm) || !input.trim()}>
           Send
         </Button>
       </form>

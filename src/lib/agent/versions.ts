@@ -96,6 +96,59 @@ export async function publishAgentVersion(input: {
   return { id, version, gate };
 }
 
+export async function rollbackAgentVersion(input: {
+  agentId: string;
+  versionId: string;
+}) {
+  const db = await getDb();
+  const version = await db
+    .prepare(`SELECT id, agent_id, snapshot, version, label FROM agent_versions WHERE id = ? AND agent_id = ?`)
+    .bind(input.versionId, input.agentId)
+    .first<{ id: string; agent_id: string; snapshot: string; version: number; label: string | null }>();
+
+  if (!version) throw new Error("Version not found");
+
+  const snap = JSON.parse(version.snapshot) as Record<string, unknown>;
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  const map: Record<string, string> = {
+    instructions: "instructions",
+    brand_voice: "brand_voice",
+    model_provider: "model_provider",
+    model_id: "model_id",
+    fallback_model_id: "fallback_model_id",
+    temperature: "temperature",
+    max_tokens: "max_tokens",
+    knowledge_mode: "knowledge_mode",
+    show_citations: "show_citations",
+    guardrails: "guardrails",
+    branding: "branding",
+    widget_config: "widget_config",
+    use_case: "use_case",
+  };
+
+  for (const [key, col] of Object.entries(map)) {
+    if (snap[key] !== undefined) {
+      fields.push(`${col} = ?`);
+      values.push(
+        typeof snap[key] === "object" && snap[key] !== null
+          ? JSON.stringify(snap[key])
+          : snap[key],
+      );
+    }
+  }
+
+  fields.push(`published_version_id = ?`, `status = 'active'`, `updated_at = ?`);
+  values.push(version.id, nowIso(), input.agentId);
+
+  await db
+    .prepare(`UPDATE agents SET ${fields.join(", ")} WHERE id = ?`)
+    .bind(...values)
+    .run();
+
+  return { id: version.id, version: version.version, label: version.label };
+}
+
 async function runPublishRegressionGate(input: { workspaceId: string; agentId: string }) {
   const db = await getDb();
   const suite = await db

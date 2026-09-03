@@ -6,6 +6,7 @@ import { getDb } from "@/lib/cloudflare";
 import { createId, nowIso } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { SUPPORTED_CHANNELS } from "@/lib/agent/channels";
+import { ChannelDeliverySimulator } from "@/components/dashboard/channel-delivery-simulator";
 
 export default async function DeployChannelsPage({
   params,
@@ -43,6 +44,7 @@ export default async function DeployChannelsPage({
     .all<{ channel: string; verify_token: string | null; status: string }>();
 
   const origin = process.env.NEXT_PUBLIC_APP_URL || "https://YOUR_DOMAIN";
+  const embedSnippet = `<script src="${origin}/widget.js" data-agent-id="${agentId}" data-channel="in_app" async></script>`;
 
   return (
     <div className="space-y-6 p-6">
@@ -66,6 +68,18 @@ export default async function DeployChannelsPage({
           ))}
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>In-app embed</CardTitle>
+          <CardDescription>Drop this snippet into your product shell for authenticated in-app chat.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <pre className="overflow-x-auto rounded-xl bg-[var(--secondary)]/70 p-3 text-xs">{embedSnippet}</pre>
+        </CardContent>
+      </Card>
+
+      <ChannelDeliverySimulator />
 
       <Card>
         <CardHeader>
