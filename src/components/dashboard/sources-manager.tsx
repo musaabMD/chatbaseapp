@@ -129,13 +129,49 @@ export function SourcesManager({ agentId }: { agentId: string }) {
     await load();
   }
 
+  async function addFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const lower = file.name.toLowerCase();
+    if (!/\.(txt|md|csv|json|html?)$/.test(lower) && !file.type.startsWith("text/")) {
+      toast.error("Upload .txt, .md, .csv, .json, or .html for now (PDF/DOCX later)");
+      e.target.value = "";
+      return;
+    }
+    setBusy(true);
+    try {
+      const text = await file.text();
+      if (!text.trim()) throw new Error("File is empty");
+      const res = await fetch("/api/sources", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "file",
+          agentId,
+          name: file.name,
+          contentType: file.type || "text/plain",
+          text,
+        }),
+      });
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Failed");
+      toast.success("File indexed");
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed");
+    } finally {
+      setBusy(false);
+      e.target.value = "";
+    }
+  }
+
   return (
     <div className="space-y-6 p-6">
       <Card>
         <CardHeader>
           <CardTitle>Knowledge sources</CardTitle>
           <CardDescription>
-            Add websites, documents, and Q&A pairs to train your assistant.
+            Add websites, text files, documents, and Q&A pairs to train your assistant.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -170,7 +206,7 @@ export function SourcesManager({ agentId }: { agentId: string }) {
         </CardContent>
       </Card>
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-4">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Website</CardTitle>
@@ -206,6 +242,16 @@ export function SourcesManager({ agentId }: { agentId: string }) {
               </div>
               <Button type="submit" size="sm" disabled={busy}>Add text</Button>
             </form>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">File upload</CardTitle>
+            <CardDescription className="text-xs">.txt / .md / .csv / .html (PDF later)</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Input type="file" accept=".txt,.md,.csv,.json,.html,.htm,text/*" disabled={busy} onChange={addFile} />
           </CardContent>
         </Card>
 

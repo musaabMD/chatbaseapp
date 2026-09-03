@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { EDUCATION_USE_CASES } from "@/lib/education/templates";
+import { AGENT_USE_CASES } from "@/lib/agent/templates";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,19 +19,19 @@ export default function OnboardingPage() {
     colors?: Array<{ hex: string }>;
   } | null>(null);
   const [form, setForm] = useState({
-    useCase: "admissions",
+    useCase: "customer_support",
     workspaceName: "",
     institutionName: "",
     website: "",
     teamSize: "11-50",
-    role: "Admissions",
+    role: "Support",
     agentName: "",
-    audience: "Prospective students",
+    audience: "Customers",
     language: "en",
   });
 
   const steps = useMemo(
-    () => ["Welcome", "Use case", "Institution", "Assistant", "Launch"],
+    () => ["Welcome", "Use case", "Organization", "Agent", "Launch"],
     [],
   );
 
@@ -75,15 +75,15 @@ export default function OnboardingPage() {
           <Card className="fade-up">
             <CardHeader>
               <CardTitle className="font-[family-name:var(--font-display)] text-3xl">
-                Build your education AI assistant
+                Build your AI customer agent
               </CardTitle>
               <CardDescription>
-                Train an assistant on your institution’s knowledge and add it to your website in minutes.
+                Train an agent on your knowledge, procedures, and tools—then deploy it for support, sales, ecommerce, education, and more.
               </CardDescription>
             </CardHeader>
             <CardContent>
               <Button size="lg" onClick={() => setStep(1)}>
-                Create assistant
+                Create agent
               </Button>
             </CardContent>
           </Card>
@@ -92,10 +92,10 @@ export default function OnboardingPage() {
         {step === 1 && (
           <div className="space-y-4">
             <h1 className="font-[family-name:var(--font-display)] text-3xl font-semibold">
-              What will your assistant help with?
+              What will your agent help with?
             </h1>
             <div className="grid gap-3 sm:grid-cols-2">
-              {EDUCATION_USE_CASES.map((item) => (
+              {AGENT_USE_CASES.map((item) => (
                 <button
                   key={item.id}
                   onClick={() => {
@@ -103,6 +103,8 @@ export default function OnboardingPage() {
                       ...f,
                       useCase: item.id,
                       agentName: f.agentName || item.title,
+                      audience: item.audienceDefault,
+                      role: item.category === "education" ? "Admissions" : "Support",
                     }));
                     setStep(2);
                   }}
@@ -111,6 +113,9 @@ export default function OnboardingPage() {
                     form.useCase === item.id && "ring-2 ring-[var(--primary)]",
                   )}
                 >
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+                    {item.category}
+                  </div>
                   <div className="font-medium">{item.title}</div>
                   <div className="mt-1 text-sm text-[var(--muted)]">{item.description}</div>
                 </button>
@@ -122,8 +127,8 @@ export default function OnboardingPage() {
         {step === 2 && (
           <Card>
             <CardHeader>
-              <CardTitle>Institution details</CardTitle>
-              <CardDescription>We’ll use your website to pre-fill branding and knowledge discovery.</CardDescription>
+              <CardTitle>Organization details</CardTitle>
+              <CardDescription>We&apos;ll use your website to pre-fill branding and knowledge discovery.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
@@ -131,23 +136,23 @@ export default function OnboardingPage() {
                 <Input
                   value={form.workspaceName}
                   onChange={(e) => setForm({ ...form, workspaceName: e.target.value })}
-                  placeholder="Northstar Admissions"
+                  placeholder="Acme Support"
                 />
               </div>
               <div className="space-y-2">
-                <Label>Institution name</Label>
+                <Label>Organization / brand name</Label>
                 <Input
                   value={form.institutionName}
                   onChange={(e) => setForm({ ...form, institutionName: e.target.value })}
-                  placeholder="Northstar University"
+                  placeholder="Acme Customer Co"
                 />
               </div>
               <div className="space-y-2">
-                <Label>Institution website</Label>
+                <Label>Website</Label>
                 <Input
                   value={form.website}
                   onChange={(e) => setForm({ ...form, website: e.target.value })}
-                  placeholder="northstar.edu"
+                  placeholder="acme.com"
                 />
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
@@ -171,16 +176,16 @@ export default function OnboardingPage() {
         {step === 3 && (
           <Card>
             <CardHeader>
-              <CardTitle>Create your first assistant</CardTitle>
-              <CardDescription>We’ll generate starter instructions for your use case.</CardDescription>
+              <CardTitle>Create your first agent</CardTitle>
+              <CardDescription>We&apos;ll generate starter instructions for your use case.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label>Assistant name</Label>
+                <Label>Agent name</Label>
                 <Input
                   value={form.agentName}
                   onChange={(e) => setForm({ ...form, agentName: e.target.value })}
-                  placeholder="Northstar Admissions Assistant"
+                  placeholder="Acme Support Agent"
                 />
               </div>
               <div className="space-y-2">
@@ -216,18 +221,18 @@ export default function OnboardingPage() {
             <CardHeader>
               <CardTitle>Ready to launch setup</CardTitle>
               <CardDescription>
-                Next you’ll crawl your website, tune behavior, test in the playground, and install the widget.
+                Next you&apos;ll add knowledge, tune behavior, test in the playground, and install the widget.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <Textarea
                 readOnly
-                value={`Assistant: ${form.agentName}\nInstitution: ${form.institutionName}\nWebsite: ${form.website || "—"}\nUse case: ${form.useCase}`}
+                value={`Agent: ${form.agentName}\nOrganization: ${form.institutionName}\nWebsite: ${form.website || "—"}\nUse case: ${form.useCase}`}
               />
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setStep(3)}>Back</Button>
                 <Button disabled={loading || !form.workspaceName || !form.institutionName || !form.agentName} onClick={finish}>
-                  {loading ? "Creating…" : "Create workspace & assistant"}
+                  {loading ? "Creating…" : "Create workspace & agent"}
                 </Button>
               </div>
             </CardContent>

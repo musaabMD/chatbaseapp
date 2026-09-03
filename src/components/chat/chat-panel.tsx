@@ -18,6 +18,10 @@ export type ChatMessageView = {
     items?: Array<{ label?: string; title?: string; subtitle?: string; action?: string; href?: string }>;
     label?: string;
     href?: string;
+    orderId?: string;
+    status?: string;
+    eta?: string;
+    trackingUrl?: string;
   } | null;
 };
 
@@ -50,22 +54,35 @@ export function ChatPanel({
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [conversationId, setConversationId] = useState(initialConversationId);
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    action: string;
+    message: string;
+    lastUserText: string;
+  } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, busy]);
 
-  async function send(text: string) {
+  async function send(text: string, confirmed = false) {
     if (!text.trim() || busy) return;
     setBusy(true);
-    const userMsg: ChatMessageView = {
-      id: `local_${Date.now()}`,
-      role: "user",
-      content: text.trim(),
-    };
-    setMessages((m) => [...m, userMsg]);
-    setInput("");
+    if (!confirmed) {
+      const userMsg: ChatMessageView = {
+        id: `local_${Date.now()}`,
+        role: "user",
+        content: text.trim(),
+      };
+      setMessages((m) => [...m, userMsg]);
+      setInput("");
+    }
+
+    const assistantId = `stream_${Date.now()}`;
+    setMessages((m) => [
+      ...m,
+      { id: assistantId, role: "assistant", content: "" },
+    ]);
 
     try {
       const res = await fetch(apiPath, {
@@ -80,31 +97,116 @@ export function ChatPanel({
           pageTitle,
           channel,
           public: isPublic || undefined,
+          confirmed: confirmed || undefined,
+          stream: true,
         }),
       });
-      const data = (await res.json()) as Record<string, unknown>;
-      if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Chat failed");
-      setConversationId(data.conversationId as string | undefined);
-      setMessages((m) => [
-        ...m,
-        {
-          id: String(data.messageId),
-          role: "assistant",
-          content: String(data.content || ""),
-          citations: data.citations as ChatMessageView["citations"],
-          structuredUi: data.structuredUi as ChatMessageView["structuredUi"],
-        },
-      ]);
-      onDebug?.(data);
+
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("text/event-stream") && res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finalPayload: Record<string, unknown> | null = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+          for (const part of parts) {
+            const lines = part.split("\n");
+            let event = "message";
+            let dataLine = "";
+            for (const line of lines) {
+              if (line.startsWith("event:")) event = line.slice(6).trim();
+              if (line.startsWith("data:")) dataLine += line.slice(5).trim();
+            }
+            if (!dataLine) continue;
+            const data = JSON.parse(dataLine) as Record<string, unknown>;
+            if (event === "token" && typeof data.text === "string") {
+              setMessages((m) =>
+                m.map((msg) =>
+                  msg.id === assistantId ? { ...msg, content: msg.content + data.text } : msg,
+                ),
+              );
+            }
+            if (event === "done") finalPayload = data;
+            if (event === "error") throw new Error(String(data.error || "Chat failed"));
+          }
+        }
+
+        if (finalPayload) {
+          setConversationId(finalPayload.conversationId as string | undefined);
+          if (finalPayload.needsConfirmation && finalPayload.confirmation) {
+            const conf = finalPayload.confirmation as { action: string; message: string };
+            setPendingConfirm({
+              action: conf.action,
+              message: conf.message,
+              lastUserText: text.trim(),
+            });
+          } else {
+            setPendingConfirm(null);
+          }
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === assistantId
+                ? {
+                    ...msg,
+                    id: String(finalPayload?.messageId || assistantId),
+                    content: String(finalPayload?.content || msg.content),
+                    citations: finalPayload?.citations as ChatMessageView["citations"],
+                    structuredUi: finalPayload?.structuredUi as ChatMessageView["structuredUi"],
+                  }
+                : msg,
+            ),
+          );
+          onDebug?.(finalPayload);
+        }
+      } else {
+        const data = (await res.json()) as Record<string, unknown>;
+        if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Chat failed");
+        setConversationId(data.conversationId as string | undefined);
+
+        if (data.needsConfirmation && data.confirmation) {
+          const conf = data.confirmation as { action: string; message: string };
+          setPendingConfirm({
+            action: conf.action,
+            message: conf.message,
+            lastUserText: text.trim(),
+          });
+        } else {
+          setPendingConfirm(null);
+        }
+
+        setMessages((m) =>
+          m.map((msg) =>
+            msg.id === assistantId
+              ? {
+                  ...msg,
+                  id: String(data.messageId),
+                  content: String(data.content || ""),
+                  citations: data.citations as ChatMessageView["citations"],
+                  structuredUi: data.structuredUi as ChatMessageView["structuredUi"],
+                }
+              : msg,
+          ),
+        );
+        onDebug?.(data);
+      }
     } catch (error) {
-      setMessages((m) => [
-        ...m,
-        {
-          id: `err_${Date.now()}`,
-          role: "assistant",
-          content: error instanceof Error ? error.message : "Something went wrong",
-        },
-      ]);
+      setMessages((m) =>
+        m.map((msg) =>
+          msg.id === assistantId
+            ? {
+                ...msg,
+                id: `err_${Date.now()}`,
+                content: error instanceof Error ? error.message : "Something went wrong",
+              }
+            : msg,
+        ),
+      );
     } finally {
       setBusy(false);
     }
@@ -114,8 +216,25 @@ export function ChatPanel({
     await fetch("/api/feedback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messageId, value }),
+      body: JSON.stringify({ messageId, value, conversationId }),
     });
+  }
+
+  async function confirmPending(ok: boolean) {
+    if (!pendingConfirm) return;
+    if (!ok) {
+      setPendingConfirm(null);
+      setMessages((m) => [
+        ...m,
+        {
+          id: `cancel_${Date.now()}`,
+          role: "assistant",
+          content: "Action cancelled. Tell me if you want to try something else.",
+        },
+      ]);
+      return;
+    }
+    await send(pendingConfirm.lastUserText, true);
   }
 
   return (
@@ -128,7 +247,7 @@ export function ChatPanel({
               {starterQuestions.map((q) => (
                 <button
                   key={q}
-                  onClick={() => send(q)}
+                  onClick={() => void send(q)}
                   className="rounded-full border border-[var(--border)] bg-white/80 px-3 py-1.5 text-left text-sm hover:bg-white"
                 >
                   {q}
@@ -210,6 +329,18 @@ export function ChatPanel({
                 ))}
               </div>
             )}
+            {m.structuredUi?.type === "order_status" && (
+              <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/50 p-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wide opacity-70">Order status</div>
+                <div className="mt-1 font-medium">
+                  {(m.structuredUi as { orderId?: string }).orderId} ·{" "}
+                  {(m.structuredUi as { status?: string }).status}
+                </div>
+                {(m.structuredUi as { eta?: string }).eta && (
+                  <div className="text-xs opacity-70">ETA: {(m.structuredUi as { eta?: string }).eta}</div>
+                )}
+              </div>
+            )}
             {m.role === "assistant" && !m.id.startsWith("err_") && !m.id.startsWith("local_") && (
               <div className="mt-2 flex gap-2">
                 <button onClick={() => feedback(m.id, 1)} className="opacity-60 hover:opacity-100">
@@ -229,6 +360,20 @@ export function ChatPanel({
         )}
         <div ref={endRef} />
       </div>
+      {pendingConfirm ? (
+        <div className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm">
+          <p className="font-medium text-amber-950">{pendingConfirm.message}</p>
+          <p className="mt-1 text-xs text-amber-800/80">Action: {pendingConfirm.action}</p>
+          <div className="mt-2 flex gap-2">
+            <Button size="sm" disabled={busy} onClick={() => void confirmPending(true)}>
+              Confirm
+            </Button>
+            <Button size="sm" variant="secondary" disabled={busy} onClick={() => void confirmPending(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <form
         className="flex gap-2 border-t border-[var(--border)] p-3"
         onSubmit={(e) => {
@@ -236,8 +381,13 @@ export function ChatPanel({
           void send(input);
         }}
       >
-        <Input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask about admissions, tuition, programs…" />
-        <Button type="submit" disabled={busy}>
+        <Input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Ask about orders, policies, pricing…"
+          disabled={Boolean(pendingConfirm)}
+        />
+        <Button type="submit" disabled={busy || Boolean(pendingConfirm) || !input.trim()}>
           Send
         </Button>
       </form>

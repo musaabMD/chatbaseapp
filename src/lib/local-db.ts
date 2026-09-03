@@ -97,7 +97,25 @@ function applyMigrations(db: Database.Database) {
   for (const file of files) {
     if (applied.has(file)) continue;
     const sql = fs.readFileSync(path.join(migrationsDir, file), "utf8");
-    db.exec(sql);
+    try {
+      db.exec(sql);
+    } catch (error) {
+      // SQLite ALTER ADD COLUMN fails if column already exists — apply statement-by-statement
+      const statements = sql
+        .split(";")
+        .map((s) => s.trim())
+        .filter((s) => s && !s.startsWith("--"));
+      for (const statement of statements) {
+        try {
+          db.exec(statement);
+        } catch (stmtError) {
+          const msg = stmtError instanceof Error ? stmtError.message : String(stmtError);
+          if (!/duplicate column name/i.test(msg)) {
+            throw stmtError;
+          }
+        }
+      }
+    }
     db.prepare(`INSERT INTO _local_migrations (id, applied_at) VALUES (?, ?)`).run(
       file,
       new Date().toISOString(),

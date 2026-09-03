@@ -26,6 +26,7 @@ export function AgentNav({ agentId }: { agentId: string }) {
       items: [
         { href: `${base}/deploy/widget`, label: "Website widget" },
         { href: `${base}/deploy/page`, label: "Assistant page" },
+        { href: `${base}/deploy/channels`, label: "Channels" },
         { href: `${base}/deploy/api`, label: "API" },
       ],
     },

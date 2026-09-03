@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireWorkspace } from "@/lib/auth";
 import { createAgentRecord } from "@/lib/knowledge/ingestion";
-import { buildInstructionTemplate, type EducationUseCase } from "@/lib/education/templates";
+import { buildInstructionTemplate, type AgentUseCase } from "@/lib/agent/templates";
 import { getDb } from "@/lib/cloudflare";
 import { nowIso } from "@/lib/utils";
 
@@ -38,8 +38,8 @@ export async function POST(req: Request) {
 
     const instructions = buildInstructionTemplate({
       agentName: body.name,
-      institutionName: workspace.institution_name || workspace.name,
-      useCase: body.useCase as EducationUseCase,
+      organizationName: workspace.institution_name || workspace.name,
+      useCase: body.useCase as AgentUseCase,
       audience: body.audience,
     });
 
@@ -51,6 +51,7 @@ export async function POST(req: Request) {
       language: body.language,
       audience: body.audience,
       instructions,
+      organizationName: workspace.institution_name || workspace.name,
     });
 
     return NextResponse.json(agent);
@@ -87,9 +88,11 @@ export async function PATCH(req: Request) {
       "show_citations",
       "guardrails",
       "branding",
+      "brand_voice",
       "widget_config",
       "audience",
       "language",
+      "avatar_url",
     ];
 
     for (const key of allowed) {

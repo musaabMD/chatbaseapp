@@ -142,15 +142,17 @@ export async function retrieveChunks(input: {
   agentId: string;
   query: string;
   topK?: number;
+  sourceTypes?: string[];
 }): Promise<RetrievedChunk[]> {
   const topK = input.topK ?? 6;
   const llm = await createLLMProvider();
   const env = await getEnv();
   const [queryEmbedding] = await llm.embed([input.query]);
 
+  let vectorHits: RetrievedChunk[] = [];
   if (env.VECTORIZE && queryEmbedding) {
     const matches = await env.VECTORIZE.query(queryEmbedding, {
-      topK,
+      topK: topK * 3,
       returnMetadata: "all",
       filter: {
         workspaceId: input.workspaceId,
@@ -158,7 +160,7 @@ export async function retrieveChunks(input: {
       },
     });
 
-    return (matches.matches || []).map((m: { id: string; score?: number; metadata?: Record<string, unknown> }) => {
+    vectorHits = (matches.matches || []).map((m: { id: string; score?: number; metadata?: Record<string, unknown> }) => {
       const meta = (m.metadata || {}) as Record<string, string>;
       return {
         id: m.id,
@@ -172,7 +174,7 @@ export async function retrieveChunks(input: {
     });
   }
 
-  // Fallback: lexical + KV vector cosine
+  // Lexical candidates (always) for hybrid retrieval
   const db = await getDb();
   const rows = await db
     .prepare(
@@ -190,14 +192,7 @@ export async function retrieveChunks(input: {
       source_id: string;
     }>();
 
-  const scored = (rows.results || []).map((row: {
-    id: string;
-    text: string;
-    title: string | null;
-    url: string | null;
-    heading: string | null;
-    source_id: string;
-  }) => ({
+  const lexicalHits = (rows.results || []).map((row) => ({
     id: row.id,
     text: row.text,
     title: row.title,
@@ -207,7 +202,51 @@ export async function retrieveChunks(input: {
     score: lexicalScore(input.query, row.text),
   }));
 
-  return scored.sort((a: RetrievedChunk, b: RetrievedChunk) => b.score - a.score).slice(0, topK);
+  // Hybrid merge: RRF-style fusion of vector + lexical
+  const fused = hybridFuse(vectorHits, lexicalHits, topK * 2);
+  return rerankChunks(input.query, fused, topK);
+}
+
+/** Reciprocal rank fusion across vector and lexical lists */
+function hybridFuse(vector: RetrievedChunk[], lexical: RetrievedChunk[], limit: number) {
+  const scores = new Map<string, { chunk: RetrievedChunk; score: number }>();
+  const k = 60;
+  vector.forEach((c, i) => {
+    const prev = scores.get(c.id);
+    const add = 1 / (k + i + 1) + c.score * 0.2;
+    scores.set(c.id, { chunk: c, score: (prev?.score || 0) + add });
+  });
+  lexical.forEach((c, i) => {
+    const prev = scores.get(c.id);
+    const add = 1 / (k + i + 1) + c.score * 0.15;
+    scores.set(c.id, {
+      chunk: prev?.chunk || c,
+      score: (prev?.score || 0) + add,
+    });
+  });
+  return Array.from(scores.values())
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((x) => ({ ...x.chunk, score: x.score }));
+}
+
+/** Lightweight lexical reranker on fused candidates */
+function rerankChunks(query: string, chunks: RetrievedChunk[], topK: number) {
+  const q = query.toLowerCase();
+  const qTokens = new Set(q.split(/\W+/).filter((t) => t.length > 2));
+  return chunks
+    .map((c) => {
+      const text = `${c.title || ""} ${c.heading || ""} ${c.text}`.toLowerCase();
+      let boost = 0;
+      if (c.title && q.includes(String(c.title).toLowerCase().slice(0, 24))) boost += 0.15;
+      for (const t of qTokens) if (text.includes(t)) boost += 0.02;
+      // Prefer denser overlapping first sentences
+      const first = c.text.slice(0, 180).toLowerCase();
+      for (const t of qTokens) if (first.includes(t)) boost += 0.01;
+      return { ...c, score: c.score + boost };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topK);
 }
 
 function lexicalScore(query: string, text: string) {

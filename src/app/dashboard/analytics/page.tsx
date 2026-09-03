@@ -1,51 +1,223 @@
 import { requireWorkspace } from "@/lib/auth";
 import { getDb } from "@/lib/cloudflare";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import Link from "next/link";
+import { listKnowledgeGaps, listTopQuestions } from "@/lib/agent/knowledge-gaps";
 
-export default async function WorkspaceAnalyticsPage() {
+export default async function WorkspaceAnalyticsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ range?: string }>;
+}) {
   const { workspace } = await requireWorkspace();
+  const sp = await searchParams;
+  const range = sp.range || "30d";
+  const days = range === "1d" ? 1 : range === "7d" ? 7 : range === "90d" ? 90 : 30;
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   const db = await getDb();
 
-  const [conversations, messages, leads, events] = await Promise.all([
-    db.prepare(`SELECT COUNT(*) as c FROM conversations WHERE workspace_id = ?`).bind(workspace.id).first<{ c: number }>(),
+  const [
+    conversations,
+    messages,
+    leads,
+    escalated,
+    aiResolved,
+    byChannel,
+    byTopic,
+    bySentiment,
+    escalationReasons,
+    actionAgg,
+    actionByName,
+  ] = await Promise.all([
+    db
+      .prepare(`SELECT COUNT(*) as c FROM conversations WHERE workspace_id = ? AND created_at >= ?`)
+      .bind(workspace.id, since)
+      .first<{ c: number }>(),
     db
       .prepare(
-        `SELECT COUNT(*) as c FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE c.workspace_id = ?`,
+        `SELECT COUNT(*) as c FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE c.workspace_id = ? AND m.created_at >= ?`,
       )
-      .bind(workspace.id)
+      .bind(workspace.id, since)
       .first<{ c: number }>(),
-    db.prepare(`SELECT COUNT(*) as c FROM leads WHERE workspace_id = ?`).bind(workspace.id).first<{ c: number }>(),
-    db.prepare(`SELECT COUNT(*) as c FROM analytics_events WHERE workspace_id = ?`).bind(workspace.id).first<{ c: number }>(),
+    db
+      .prepare(`SELECT COUNT(*) as c FROM leads WHERE workspace_id = ? AND created_at >= ?`)
+      .bind(workspace.id, since)
+      .first<{ c: number }>(),
+    db
+      .prepare(
+        `SELECT COUNT(*) as c FROM conversations WHERE workspace_id = ? AND created_at >= ? AND handoff_status IN ('escalated','human','on_hold','resolved')`,
+      )
+      .bind(workspace.id, since)
+      .first<{ c: number }>(),
+    db
+      .prepare(
+        `SELECT COUNT(*) as c FROM conversations WHERE workspace_id = ? AND created_at >= ? AND (resolution = 'AI_RESOLVED' OR (handoff_status = 'ai' AND status = 'closed'))`,
+      )
+      .bind(workspace.id, since)
+      .first<{ c: number }>(),
+    db
+      .prepare(
+        `SELECT channel, COUNT(*) as c FROM conversations WHERE workspace_id = ? AND created_at >= ? GROUP BY channel ORDER BY c DESC`,
+      )
+      .bind(workspace.id, since)
+      .all<{ channel: string; c: number }>(),
+    db
+      .prepare(
+        `SELECT COALESCE(topic,'General') as topic, COUNT(*) as c FROM conversations WHERE workspace_id = ? AND created_at >= ? GROUP BY topic ORDER BY c DESC LIMIT 8`,
+      )
+      .bind(workspace.id, since)
+      .all<{ topic: string; c: number }>(),
+    db
+      .prepare(
+        `SELECT COALESCE(sentiment,'neutral') as sentiment, COUNT(*) as c FROM conversations WHERE workspace_id = ? AND created_at >= ? GROUP BY sentiment ORDER BY c DESC`,
+      )
+      .bind(workspace.id, since)
+      .all<{ sentiment: string; c: number }>(),
+    db
+      .prepare(
+        `SELECT reason, COUNT(*) as c FROM escalations WHERE workspace_id = ? AND created_at >= ? GROUP BY reason ORDER BY c DESC LIMIT 8`,
+      )
+      .bind(workspace.id, since)
+      .all<{ reason: string; c: number }>(),
+    db
+      .prepare(
+        `SELECT COUNT(*) as total,
+                SUM(CASE WHEN status = 'success' OR status = 'completed' THEN 1 ELSE 0 END) as ok,
+                SUM(CASE WHEN status = 'failed' OR status = 'error' THEN 1 ELSE 0 END) as failed,
+                SUM(CASE WHEN requires_confirmation = 1 THEN 1 ELSE 0 END) as needs_confirm
+         FROM action_executions WHERE workspace_id = ? AND created_at >= ?`,
+      )
+      .bind(workspace.id, since)
+      .first<{ total: number; ok: number; failed: number; needs_confirm: number }>(),
+    db
+      .prepare(
+        `SELECT name, COUNT(*) as c,
+                SUM(CASE WHEN status = 'success' OR status = 'completed' THEN 1 ELSE 0 END) as ok
+         FROM action_executions WHERE workspace_id = ? AND created_at >= ?
+         GROUP BY name ORDER BY c DESC LIMIT 8`,
+      )
+      .bind(workspace.id, since)
+      .all<{ name: string; c: number; ok: number }>(),
   ]);
 
+  const prevSince = new Date(Date.now() - days * 2 * 24 * 60 * 60 * 1000).toISOString();
+  const mid = since;
+
+  const [csatRow, prevTopics, currTopics] = await Promise.all([
+    db
+      .prepare(
+        `SELECT AVG(csat) as avg_csat, COUNT(csat) as rated
+         FROM conversations WHERE workspace_id = ? AND created_at >= ? AND csat IS NOT NULL`,
+      )
+      .bind(workspace.id, since)
+      .first<{ avg_csat: number | null; rated: number }>(),
+    db
+      .prepare(
+        `SELECT COALESCE(topic,'General') as topic, COUNT(*) as c
+         FROM conversations WHERE workspace_id = ? AND created_at >= ? AND created_at < ?
+         GROUP BY topic`,
+      )
+      .bind(workspace.id, prevSince, mid)
+      .all<{ topic: string; c: number }>(),
+    db
+      .prepare(
+        `SELECT COALESCE(topic,'General') as topic, COUNT(*) as c
+         FROM conversations WHERE workspace_id = ? AND created_at >= ?
+         GROUP BY topic`,
+      )
+      .bind(workspace.id, mid)
+      .all<{ topic: string; c: number }>(),
+  ]);
+
+  const prevMap = new Map((prevTopics.results || []).map((t) => [t.topic, t.c]));
+  const trends = (currTopics.results || [])
+    .map((t) => {
+      const prev = prevMap.get(t.topic) || 0;
+      const delta = prev === 0 ? (t.c > 0 ? 100 : 0) : Math.round(((t.c - prev) / prev) * 100);
+      return { topic: t.topic, current: t.c, previous: prev, delta };
+    })
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, 6);
+
+  const gaps = (await listKnowledgeGaps(workspace.id, undefined, 8)) as Array<{
+    id: string;
+    question: string;
+    occurrence_count: number;
+    avg_confidence: number | null;
+    last_conversation_id: string | null;
+  }>;
+  const topQuestions = (await listTopQuestions(workspace.id, undefined, 8)) as Array<{
+    id: string;
+    canonical_question: string;
+    occurrence_count: number;
+    sample_conversation_id: string | null;
+  }>;
+
+  const totalConv = conversations?.c ?? 0;
+  const escalatedCount = escalated?.c ?? 0;
+  const automationRate = totalConv ? Math.round(((totalConv - escalatedCount) / totalConv) * 100) : 0;
+  const escalationRate = totalConv ? Math.round((escalatedCount / totalConv) * 100) : 0;
+  const resolutionRate = totalConv
+    ? Math.round(((aiResolved?.c ?? 0) / totalConv) * 100)
+    : 0;
+  const avgMessages = totalConv ? Math.round(((messages?.c ?? 0) / totalConv) * 10) / 10 : 0;
+
   const stats = [
-    { label: "Conversations", value: conversations?.c ?? 0 },
+    { label: "Conversations", value: totalConv },
     { label: "Messages", value: messages?.c ?? 0 },
+    { label: "Avg messages / chat", value: avgMessages },
+    { label: "Automation rate", value: `${automationRate}%` },
+    { label: "Escalation rate", value: `${escalationRate}%` },
+    { label: "AI resolution rate", value: `${resolutionRate}%` },
+    {
+      label: "CSAT",
+      value:
+        csatRow?.avg_csat != null
+          ? `${Number(csatRow.avg_csat).toFixed(1)} (${csatRow.rated})`
+          : "—",
+    },
     { label: "Leads", value: leads?.c ?? 0 },
-    { label: "Events tracked", value: events?.c ?? 0 },
+    { label: "Actions run", value: actionAgg?.total ?? 0 },
+    {
+      label: "Action success",
+      value: actionAgg?.total
+        ? `${Math.round(((actionAgg.ok || 0) / actionAgg.total) * 100)}%`
+        : "—",
+    },
   ];
 
-  const topAgents = await db
-    .prepare(
-      `SELECT a.name, COUNT(c.id) as c
-       FROM agents a
-       LEFT JOIN conversations c ON c.agent_id = a.id
-       WHERE a.workspace_id = ?
-       GROUP BY a.id
-       ORDER BY c DESC
-       LIMIT 5`,
-    )
-    .bind(workspace.id)
-    .all<{ name: string; c: number }>();
+  const ranges = [
+    { id: "1d", label: "Today" },
+    { id: "7d", label: "7 days" },
+    { id: "30d", label: "30 days" },
+    { id: "90d", label: "90 days" },
+  ];
 
   return (
     <div className="space-y-6 p-6 md:p-8">
-      <div>
-        <h1 className="font-[family-name:var(--font-display)] text-3xl font-semibold tracking-tight">Analytics</h1>
-        <p className="mt-1 text-sm text-[var(--muted)]">Workspace-wide assistant performance.</p>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="font-[family-name:var(--font-display)] text-3xl font-semibold tracking-tight">Analytics</h1>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            Optimize automation, escalations, topics, sentiment, and knowledge gaps.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          {ranges.map((r) => (
+            <Link
+              key={r.id}
+              href={`/dashboard/analytics?range=${r.id}`}
+              className={`rounded-lg px-3 py-1.5 text-sm ${
+                range === r.id ? "bg-[var(--primary)] text-white" : "bg-white/70 text-[var(--muted)]"
+              }`}
+            >
+              {r.label}
+            </Link>
+          ))}
+        </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {stats.map((s) => (
           <Card key={s.label}>
             <CardHeader>
@@ -56,19 +228,186 @@ export default async function WorkspaceAnalyticsPage() {
         ))}
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Top assistants</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {(topAgents.results || []).map((row: { name: string; c: number }) => (
-            <div key={row.name} className="flex justify-between text-sm">
-              <span>{row.name}</span>
-              <span className="font-medium">{row.c} conversations</span>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>By channel</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {(byChannel.results || []).length === 0 && (
+              <p className="text-sm text-[var(--muted)]">No channel data yet.</p>
+            )}
+            {(byChannel.results || []).map((row) => (
+              <div key={row.channel} className="flex justify-between text-sm">
+                <span>{row.channel}</span>
+                <span className="font-medium">{row.c}</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Topics & trends</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {(byTopic.results || []).length === 0 && (
+              <p className="text-sm text-[var(--muted)]">No topics yet.</p>
+            )}
+            {(byTopic.results || []).map((row) => (
+              <div key={row.topic} className="flex justify-between text-sm">
+                <Link href={`/dashboard/inbox?topic=${encodeURIComponent(row.topic)}`} className="hover:underline">
+                  {row.topic}
+                </Link>
+                <span className="font-medium">{row.c}</span>
+              </div>
+            ))}
+            {trends.length > 0 && (
+              <div className="mt-4 border-t border-[var(--border)] pt-3">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+                  Period-over-period
+                </div>
+                {trends.map((t) => (
+                  <div key={t.topic} className="flex justify-between text-sm">
+                    <span>{t.topic}</span>
+                    <span className={t.delta > 0 ? "text-amber-700" : t.delta < 0 ? "text-emerald-700" : ""}>
+                      {t.delta > 0 ? "+" : ""}
+                      {t.delta}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Sentiment</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {(bySentiment.results || []).length === 0 && (
+              <p className="text-sm text-[var(--muted)]">No sentiment data yet.</p>
+            )}
+            {(bySentiment.results || []).map((row) => (
+              <div key={row.sentiment} className="flex justify-between text-sm">
+                <span>{row.sentiment}</span>
+                <span className="font-medium">{row.c}</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Escalation review</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {(escalationReasons.results || []).length === 0 && (
+              <p className="text-sm text-[var(--muted)]">No escalations yet.</p>
+            )}
+            {(escalationReasons.results || []).map((row) => (
+              <div key={row.reason} className="flex justify-between text-sm">
+                <Link
+                  href={`/dashboard/inbox?filter=escalated&reason=${encodeURIComponent(row.reason)}`}
+                  className="hover:underline"
+                >
+                  {row.reason}
+                </Link>
+                <span className="font-medium">{row.c}</span>
+              </div>
+            ))}
+            <Link href="/dashboard/inbox?filter=escalated" className="text-sm text-[var(--primary)] hover:underline">
+              Open escalated inbox →
+            </Link>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Action executions</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <div className="flex justify-between text-sm">
+              <span>Succeeded</span>
+              <span className="font-medium">{actionAgg?.ok ?? 0}</span>
             </div>
-          ))}
-        </CardContent>
-      </Card>
+            <div className="flex justify-between text-sm">
+              <span>Failed</span>
+              <span className="font-medium">{actionAgg?.failed ?? 0}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span>Needed confirmation</span>
+              <span className="font-medium">{actionAgg?.needs_confirm ?? 0}</span>
+            </div>
+            {(actionByName.results || []).length === 0 ? (
+              <p className="pt-2 text-sm text-[var(--muted)]">No actions recorded yet.</p>
+            ) : (
+              <div className="mt-3 border-t border-[var(--border)] pt-3 space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+                  By action
+                </div>
+                {(actionByName.results || []).map((row) => (
+                  <div key={row.name} className="flex justify-between text-sm">
+                    <span>{row.name}</span>
+                    <span className="font-medium">
+                      {row.c} · {row.ok} ok
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>What customers keep asking</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {topQuestions.length === 0 && (
+              <p className="text-sm text-[var(--muted)]">No clustered questions yet.</p>
+            )}
+            {topQuestions.map((q) => (
+              <div key={q.id} className="flex justify-between gap-3 text-sm">
+                <span className="line-clamp-2">{q.canonical_question}</span>
+                <span className="shrink-0 font-medium">{q.occurrence_count}</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Knowledge gaps</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {gaps.length === 0 && (
+              <p className="text-sm text-[var(--muted)]">No gaps detected yet.</p>
+            )}
+            {gaps.map((g) => (
+              <div key={g.id} className="rounded-xl border border-[var(--border)] p-2 text-sm">
+                <div className="line-clamp-2">{g.question}</div>
+                <div className="mt-1 flex justify-between text-xs text-[var(--muted)]">
+                  <span>×{g.occurrence_count}</span>
+                  <span>conf {g.avg_confidence != null ? g.avg_confidence.toFixed(2) : "—"}</span>
+                </div>
+                {g.last_conversation_id && (
+                  <Link
+                    href={`/dashboard/inbox/${g.last_conversation_id}`}
+                    className="text-xs text-[var(--primary)] hover:underline"
+                  >
+                    Review conversation →
+                  </Link>
+                )}
+              </div>
+            ))}
+            <Link href="/dashboard/backstage" className="text-sm text-[var(--primary)] hover:underline">
+              Ask Backstage to draft FAQs →
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

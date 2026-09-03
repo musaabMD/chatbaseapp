@@ -13,21 +13,26 @@ type BrandingConfig = {
   logoUrl?: string;
   headerTitle?: string;
   avatarUrl?: string;
+  welcomeMessage?: string;
+  position?: string;
 };
 
 export function BrandingSettingsForm({
   agentId,
   initialBranding,
   initialAvatarUrl,
+  initialBrandVoice,
 }: {
   agentId: string;
   initialBranding: BrandingConfig;
   initialAvatarUrl: string;
+  initialBrandVoice: string;
 }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [branding, setBranding] = useState<BrandingConfig>(initialBranding);
   const [avatarUrl, setAvatarUrl] = useState(initialAvatarUrl);
+  const [brandVoice, setBrandVoice] = useState(initialBrandVoice);
 
   async function save() {
     setLoading(true);
@@ -39,6 +44,7 @@ export function BrandingSettingsForm({
           id: agentId,
           branding,
           avatar_url: avatarUrl || null,
+          brand_voice: brandVoice || null,
         }),
       });
       const data = (await res.json()) as Record<string, unknown>;
@@ -57,7 +63,7 @@ export function BrandingSettingsForm({
       <Card>
         <CardHeader>
           <CardTitle>Branding</CardTitle>
-          <CardDescription>Customize colors and appearance for widget and hosted page.</CardDescription>
+          <CardDescription>Visual appearance for widget and hosted page.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
@@ -73,7 +79,15 @@ export function BrandingSettingsForm({
             <Input
               value={branding.headerTitle || ""}
               onChange={(e) => setBranding({ ...branding, headerTitle: e.target.value })}
-              placeholder="Admissions Assistant"
+              placeholder="Support Assistant"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Welcome message</Label>
+            <Input
+              value={branding.welcomeMessage || ""}
+              onChange={(e) => setBranding({ ...branding, welcomeMessage: e.target.value })}
+              placeholder="Hi! How can I help you today?"
             />
           </div>
           <div className="space-y-2">
@@ -92,7 +106,24 @@ export function BrandingSettingsForm({
               placeholder="https://..."
             />
           </div>
-          <Button onClick={save} disabled={loading}>{loading ? "Saving…" : "Save branding"}</Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Brand voice</CardTitle>
+          <CardDescription>
+            How the agent should sound — separate from operational instructions and knowledge.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <textarea
+            className="min-h-32 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+            value={brandVoice}
+            onChange={(e) => setBrandVoice(e.target.value)}
+            placeholder="Warm, concise, and professional. Prefer plain language. Never use slang or emoji."
+          />
+          <Button onClick={save} disabled={loading}>{loading ? "Saving…" : "Save branding & voice"}</Button>
         </CardContent>
       </Card>
     </div>
