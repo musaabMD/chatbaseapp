@@ -78,6 +78,12 @@ export function ChatPanel({
       setInput("");
     }
 
+    const assistantId = `stream_${Date.now()}`;
+    setMessages((m) => [
+      ...m,
+      { id: assistantId, role: "assistant", content: "" },
+    ]);
+
     try {
       const res = await fetch(apiPath, {
         method: "POST",
@@ -92,43 +98,115 @@ export function ChatPanel({
           channel,
           public: isPublic || undefined,
           confirmed: confirmed || undefined,
+          stream: true,
         }),
       });
-      const data = (await res.json()) as Record<string, unknown>;
-      if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Chat failed");
-      setConversationId(data.conversationId as string | undefined);
 
-      if (data.needsConfirmation && data.confirmation) {
-        const conf = data.confirmation as { action: string; message: string };
-        setPendingConfirm({
-          action: conf.action,
-          message: conf.message,
-          lastUserText: text.trim(),
-        });
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("text/event-stream") && res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finalPayload: Record<string, unknown> | null = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+          for (const part of parts) {
+            const lines = part.split("\n");
+            let event = "message";
+            let dataLine = "";
+            for (const line of lines) {
+              if (line.startsWith("event:")) event = line.slice(6).trim();
+              if (line.startsWith("data:")) dataLine += line.slice(5).trim();
+            }
+            if (!dataLine) continue;
+            const data = JSON.parse(dataLine) as Record<string, unknown>;
+            if (event === "token" && typeof data.text === "string") {
+              setMessages((m) =>
+                m.map((msg) =>
+                  msg.id === assistantId ? { ...msg, content: msg.content + data.text } : msg,
+                ),
+              );
+            }
+            if (event === "done") finalPayload = data;
+            if (event === "error") throw new Error(String(data.error || "Chat failed"));
+          }
+        }
+
+        if (finalPayload) {
+          setConversationId(finalPayload.conversationId as string | undefined);
+          if (finalPayload.needsConfirmation && finalPayload.confirmation) {
+            const conf = finalPayload.confirmation as { action: string; message: string };
+            setPendingConfirm({
+              action: conf.action,
+              message: conf.message,
+              lastUserText: text.trim(),
+            });
+          } else {
+            setPendingConfirm(null);
+          }
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === assistantId
+                ? {
+                    ...msg,
+                    id: String(finalPayload?.messageId || assistantId),
+                    content: String(finalPayload?.content || msg.content),
+                    citations: finalPayload?.citations as ChatMessageView["citations"],
+                    structuredUi: finalPayload?.structuredUi as ChatMessageView["structuredUi"],
+                  }
+                : msg,
+            ),
+          );
+          onDebug?.(finalPayload);
+        }
       } else {
-        setPendingConfirm(null);
-      }
+        const data = (await res.json()) as Record<string, unknown>;
+        if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : undefined) || "Chat failed");
+        setConversationId(data.conversationId as string | undefined);
 
-      setMessages((m) => [
-        ...m,
-        {
-          id: String(data.messageId),
-          role: "assistant",
-          content: String(data.content || ""),
-          citations: data.citations as ChatMessageView["citations"],
-          structuredUi: data.structuredUi as ChatMessageView["structuredUi"],
-        },
-      ]);
-      onDebug?.(data);
+        if (data.needsConfirmation && data.confirmation) {
+          const conf = data.confirmation as { action: string; message: string };
+          setPendingConfirm({
+            action: conf.action,
+            message: conf.message,
+            lastUserText: text.trim(),
+          });
+        } else {
+          setPendingConfirm(null);
+        }
+
+        setMessages((m) =>
+          m.map((msg) =>
+            msg.id === assistantId
+              ? {
+                  ...msg,
+                  id: String(data.messageId),
+                  content: String(data.content || ""),
+                  citations: data.citations as ChatMessageView["citations"],
+                  structuredUi: data.structuredUi as ChatMessageView["structuredUi"],
+                }
+              : msg,
+          ),
+        );
+        onDebug?.(data);
+      }
     } catch (error) {
-      setMessages((m) => [
-        ...m,
-        {
-          id: `err_${Date.now()}`,
-          role: "assistant",
-          content: error instanceof Error ? error.message : "Something went wrong",
-        },
-      ]);
+      setMessages((m) =>
+        m.map((msg) =>
+          msg.id === assistantId
+            ? {
+                ...msg,
+                id: `err_${Date.now()}`,
+                content: error instanceof Error ? error.message : "Something went wrong",
+              }
+            : msg,
+        ),
+      );
     } finally {
       setBusy(false);
     }

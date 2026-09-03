@@ -94,6 +94,16 @@ export function parseGuardrails(raw: string | null | undefined): GuardrailRule[]
       message: "I can't help with that topic. Please ask something else or request a human.",
     });
   }
+  if (parsed.piiFilter) {
+    converted.push({
+      name: "PII filter",
+      condition: "always",
+      scope: "post_model",
+      action: "rewrite",
+      severity: "medium",
+      message: "Redact emails, phones, cards, and SSNs in responses.",
+    });
+  }
   return converted;
 }
 
@@ -147,6 +157,35 @@ export function evaluateGuardrails(input: {
   }
 
   return { allow, escalate, requireConfirmation, message, matched };
+}
+
+/** Redact common PII patterns in model output / logs when piiFilter is enabled. */
+export function redactPii(text: string): { text: string; redacted: boolean } {
+  let out = text;
+  const before = out;
+  out = out.replace(
+    /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+    "[REDACTED_EMAIL]",
+  );
+  out = out.replace(
+    /\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b/g,
+    "[REDACTED_PHONE]",
+  );
+  out = out.replace(
+    /\b(?:\d[ -]*?){13,19}\b/g,
+    "[REDACTED_CARD]",
+  );
+  out = out.replace(
+    /\b\d{3}-\d{2}-\d{4}\b/g,
+    "[REDACTED_SSN]",
+  );
+  return { text: out, redacted: out !== before };
+}
+
+export function legacyPiiFilterEnabled(raw: string | null | undefined): boolean {
+  const parsed = safeJsonParse<LegacyGuardrails | GuardrailRule[]>(raw, {});
+  if (Array.isArray(parsed)) return false;
+  return Boolean(parsed.piiFilter);
 }
 
 export function guardrailsToPrompt(rules: GuardrailRule[]) {

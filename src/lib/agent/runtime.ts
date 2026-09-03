@@ -3,7 +3,7 @@ import { createLLMProvider } from "@/lib/llm/provider";
 import { buildGroundedContext, retrieveChunks } from "@/lib/rag/retrieve";
 import { createId, nowIso, safeJsonParse } from "@/lib/utils";
 import { STARTER_QUESTIONS } from "@/lib/agent/templates";
-import { parseGuardrails, evaluateGuardrails } from "@/lib/agent/guardrails";
+import { parseGuardrails, evaluateGuardrails, redactPii, legacyPiiFilterEnabled } from "@/lib/agent/guardrails";
 import { composeSystemPrompt } from "@/lib/agent/prompt";
 import { getOrStartProcedureRun, advanceProcedureRun } from "@/lib/agent/procedures";
 import {
@@ -23,6 +23,7 @@ import { saveAgentTrace } from "@/lib/agent/traces";
 import { classifyTopic, classifySentiment, detectLanguage } from "@/lib/agent/classify";
 import { recordConversationSignals } from "@/lib/agent/knowledge-gaps";
 import { recordUsage } from "@/lib/agent/usage";
+import { assertWithinMessageQuota } from "@/lib/billing/quota";
 
 export type ChatCitation = {
   title: string;
@@ -80,7 +81,6 @@ export async function runAgentTurn(input: {
 
   if (!agent) throw new Error("Agent not found");
 
-  // Production channels use the published snapshot; playground/tests use live draft config
   const productionChannels = new Set([
     "widget",
     "hosted",
@@ -93,6 +93,11 @@ export async function runAgentTurn(input: {
     "in_app",
     "api",
   ]);
+  if (productionChannels.has(input.channel || "")) {
+    await assertWithinMessageQuota(input.workspaceId);
+  }
+
+  // Production channels use the published snapshot; playground/tests use live draft config
   const usePublished = productionChannels.has(input.channel || "") && Boolean(agent.published_version_id);
   if (usePublished && agent.published_version_id) {
     const version = await db
@@ -374,6 +379,10 @@ export async function runAgentTurn(input: {
     } else if (!postModel.allow) {
       replyText = rewriteMsg || "I can't help with that request.";
     }
+  }
+  if (legacyPiiFilterEnabled(agent.guardrails)) {
+    const redacted = redactPii(replyText);
+    replyText = redacted.text;
   }
   if (postModel.escalate) {
     return finalizeEscalation({

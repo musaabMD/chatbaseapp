@@ -153,11 +153,20 @@ function extractSuggestions(
 
   if (/fix|improve|faq|knowledge|gap/i.test(userMessage) && gaps.length) {
     const top = gaps[0]!;
+    const draftAnswer =
+      answer
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith("I ") && l.length > 20)
+        .slice(0, 4)
+        .join(" ")
+        .slice(0, 600) ||
+      `We don't have a published answer for "${top.question || "this question"}" yet. Please confirm the official policy, then replace this draft.`;
     suggestions.push({
       type: "proposed_faq",
       title: `Add FAQ for: ${(top.question || "").slice(0, 80)}`,
-      body: `Customers asked this ${top.occurrence_count || 1} time(s) with weak knowledge coverage. Draft a clear FAQ answer and add it as a Q&A source.`,
-      payload: { question: top.question },
+      body: draftAnswer,
+      payload: { question: top.question, answer: draftAnswer },
     });
   }
 
@@ -216,13 +225,17 @@ export async function applyBackstageSuggestion(input: {
 
   // Applying creates draft artifacts only — never silent production mutation beyond FAQ/test drafts
   if (row.type === "proposed_faq" && row.agent_id) {
-    const payload = JSON.parse(row.payload || "{}") as { question?: string };
+    const payload = JSON.parse(row.payload || "{}") as { question?: string; answer?: string };
+    const answer =
+      (payload.answer && payload.answer.trim()) ||
+      row.body.trim() ||
+      "Draft answer approved from Backstage — review before publishing.";
     const sourceId = createId("src");
     await db
       .prepare(
         `INSERT INTO knowledge_sources
         (id, workspace_id, agent_id, name, type, status, content, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'qa', 'pending', ?, ?, ?)`,
+        VALUES (?, ?, ?, ?, 'qa', 'ready', ?, ?, ?)`,
       )
       .bind(
         sourceId,
@@ -231,12 +244,26 @@ export async function applyBackstageSuggestion(input: {
         row.title.slice(0, 120),
         JSON.stringify({
           q: payload.question || row.title,
-          a: "TODO: replace with approved answer before training.",
+          a: answer,
         }),
         nowIso(),
         nowIso(),
       )
       .run();
+  }
+
+  if (row.type === "proposed_instruction" && row.agent_id) {
+    const agent = await db
+      .prepare(`SELECT instructions FROM agents WHERE id = ? AND workspace_id = ?`)
+      .bind(row.agent_id, input.workspaceId)
+      .first<{ instructions: string | null }>();
+    if (agent) {
+      const addition = `\n\n# Backstage approved tweak\n${row.body.slice(0, 800)}`;
+      await db
+        .prepare(`UPDATE agents SET instructions = ?, updated_at = ? WHERE id = ?`)
+        .bind(`${agent.instructions || ""}${addition}`.trim(), nowIso(), row.agent_id)
+        .run();
+    }
   }
 
   if (row.type === "proposed_test_case" && row.agent_id) {
