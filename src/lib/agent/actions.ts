@@ -239,14 +239,14 @@ export function detectActionIntent(message: string, actions: ActionRow[]): { act
       },
     },
     {
-      slugs: ["get_subscription", "lookup_subscription"],
-      test: /(my subscription|current plan|what plan am i)/i,
-      args: () => ({}),
-    },
-    {
       slugs: ["update_subscription"],
       test: /(upgrade|downgrade|change).*(plan|subscription)/i,
       args: () => ({ desired_plan: /business/i.test(m) ? "Business" : "Pro" }),
+    },
+    {
+      slugs: ["get_subscription", "lookup_subscription"],
+      test: /(my subscription|current plan|what plan am i)/i,
+      args: () => ({}),
     },
     {
       slugs: ["get_availability", "get_appointment_slots"],
@@ -259,8 +259,13 @@ export function detectActionIntent(message: string, actions: ActionRow[]): { act
       args: () => ({}),
     },
     {
-      slugs: ["check_return_eligibility", "create_return", "issue_refund"],
-      test: /(return this|start a return|refund my|exchange my)/i,
+      slugs: ["issue_refund", "create_return"],
+      test: /(refund my|issue a refund|create a return|start a return)/i,
+      args: () => ({ order_id: orderMatch?.[1] || "ORD-1001" }),
+    },
+    {
+      slugs: ["check_return_eligibility"],
+      test: /(return (eligib|policy)|can i return|is .*returnable|exchange my)/i,
       args: () => ({ order_id: orderMatch?.[1] || "ORD-1001" }),
     },
   ];

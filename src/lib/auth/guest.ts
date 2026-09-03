@@ -243,6 +243,20 @@ async function seedDemoAgents(workspaceId: string) {
       confirm: 0,
     },
     {
+      name: "Create return / issue refund",
+      slug: "issue_refund",
+      description: "Create return and refund after customer confirmation",
+      sensitive: 1,
+      confirm: 1,
+    },
+    {
+      name: "Create booking",
+      slug: "create_booking",
+      description: "Book a confirmed appointment or room",
+      sensitive: 1,
+      confirm: 1,
+    },
+    {
       name: "Get appointment slots",
       slug: "get_appointment_slots",
       description: "Availability for booking workflows",
