@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "build": "next build",
-    "dev": "CAMPUSLY_LOCAL=1 next dev --hostname 0.0.0.0 --port 3000",
-    "dev:local": "CAMPUSLY_LOCAL=1 next dev --hostname 0.0.0.0 --port 3000",
+    "dev": "CAMPUSLY_LOCAL=1 next dev --hostname 0.0.0.0 --port 3010",
+    "dev:local": "CAMPUSLY_LOCAL=1 next dev --hostname 0.0.0.0 --port 3010",
     "start": "next start",
     "lint": "eslint",
     "db:migrate:local": "wrangler d1 migrations apply campusly-db --local",
