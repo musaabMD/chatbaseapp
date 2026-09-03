@@ -1,4 +1,4 @@
-import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { getLocalDb, isLocalMode } from "@/lib/local-db";
 
 export type CloudflareEnv = {
   DB: D1Database;
@@ -19,17 +19,30 @@ export type CloudflareEnv = {
 };
 
 export async function getEnv(): Promise<CloudflareEnv> {
+  // Prefer pure local mode for demo/testing without Cloudflare auth
+  if (isLocalMode()) {
+    return {
+      DB: getLocalDb(),
+      AUTH_SECRET: process.env.AUTH_SECRET || "campusly-local-dev-secret",
+      CONTEXT_DEV_API_KEY: process.env.CONTEXT_DEV_API_KEY,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+      APP_URL: process.env.APP_URL || "http://localhost:3000",
+      APP_NAME: "Campusly",
+    };
+  }
+
   try {
+    const { getCloudflareContext } = await import("@opennextjs/cloudflare");
     const { env } = await getCloudflareContext({ async: true });
     return env as unknown as CloudflareEnv;
   } catch {
-    // Build-time / non-Workers contexts
     return {
-      DB: undefined as unknown as D1Database,
-      AUTH_SECRET: process.env.AUTH_SECRET,
+      DB: getLocalDb(),
+      AUTH_SECRET: process.env.AUTH_SECRET || "campusly-local-dev-secret",
       CONTEXT_DEV_API_KEY: process.env.CONTEXT_DEV_API_KEY,
       OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-      APP_URL: process.env.APP_URL,
+      APP_URL: process.env.APP_URL || "http://localhost:3000",
+      APP_NAME: "Campusly",
     };
   }
 }
@@ -37,7 +50,7 @@ export async function getEnv(): Promise<CloudflareEnv> {
 export async function getDb() {
   const env = await getEnv();
   if (!env.DB) {
-    throw new Error("D1 database binding DB is not configured. Run with Cloudflare bindings (next dev after OpenNext init, or wrangler/opennext preview).");
+    return getLocalDb();
   }
   return env.DB;
 }
