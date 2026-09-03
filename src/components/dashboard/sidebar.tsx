@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Activity,
-  BookOpen,
   Bot,
   CreditCard,
   Home,
@@ -15,12 +14,13 @@ import {
   Settings,
   Users,
   Gauge,
+  Headset,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const items = [
   { href: "/dashboard", label: "Home", icon: Home },
-  { href: "/dashboard/agents", label: "Assistants", icon: Bot },
+  { href: "/dashboard/agents", label: "Agents", icon: Bot },
   { href: "/dashboard/inbox", label: "Inbox", icon: Inbox },
   { href: "/dashboard/contacts", label: "Contacts", icon: Users },
   { href: "/dashboard/analytics", label: "Analytics", icon: LineChart },
@@ -38,7 +38,7 @@ export function Sidebar({ workspaceName }: { workspaceName?: string }) {
       <div className="border-b border-[var(--border)] px-5 py-5">
         <Link href="/dashboard" className="flex items-center gap-2">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--primary)] text-white">
-            <BookOpen className="h-5 w-5" />
+            <Headset className="h-5 w-5" />
           </div>
           <div>
             <div className="font-[family-name:var(--font-display)] text-lg font-semibold tracking-tight">
@@ -70,9 +70,9 @@ export function Sidebar({ workspaceName }: { workspaceName?: string }) {
         })}
       </nav>
       <div className="border-t border-[var(--border)] p-4 text-xs text-[var(--muted)]">
-        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
           <Activity className="h-3.5 w-3.5" />
-          Education AI platform
+          AI customer agent platform
         </div>
       </div>
     </aside>

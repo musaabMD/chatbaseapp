@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { GuestDemoButton } from "@/components/auth/guest-demo-button";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -40,9 +41,10 @@ export default function SignupPage() {
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle className="font-[family-name:var(--font-display)] text-2xl">Create your Campusly account</CardTitle>
-          <CardDescription>Build an education AI assistant in minutes.</CardDescription>
+          <CardDescription>Build AI customer agents for support, sales, ecommerce, and more.</CardDescription>
         </CardHeader>
         <CardContent>
+          <GuestDemoButton className="mb-4 w-full" size="default" variant="outline" label="Try demo — no sign-in" />
           <form className="space-y-4" onSubmit={onSubmit}>
             <div className="space-y-2">
               <Label htmlFor="name">Name</Label>

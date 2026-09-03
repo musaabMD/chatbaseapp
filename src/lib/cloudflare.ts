@@ -13,6 +13,7 @@ export type CloudflareEnv = {
   AUTH_SECRET?: string;
   CONTEXT_DEV_API_KEY?: string;
   OPENAI_API_KEY?: string;
+  OPENROUTER_API_KEY?: string;
   TURNSTILE_SECRET_KEY?: string;
   APP_URL?: string;
   APP_NAME?: string;
@@ -26,7 +27,8 @@ export async function getEnv(): Promise<CloudflareEnv> {
       AUTH_SECRET: process.env.AUTH_SECRET || "campusly-local-dev-secret",
       CONTEXT_DEV_API_KEY: process.env.CONTEXT_DEV_API_KEY,
       OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-      APP_URL: process.env.APP_URL || "http://localhost:3000",
+      OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+      APP_URL: process.env.APP_URL || "http://localhost:3010",
       APP_NAME: "Campusly",
     };
   }
@@ -41,7 +43,8 @@ export async function getEnv(): Promise<CloudflareEnv> {
       AUTH_SECRET: process.env.AUTH_SECRET || "campusly-local-dev-secret",
       CONTEXT_DEV_API_KEY: process.env.CONTEXT_DEV_API_KEY,
       OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-      APP_URL: process.env.APP_URL || "http://localhost:3000",
+      OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+      APP_URL: process.env.APP_URL || "http://localhost:3010",
       APP_NAME: "Campusly",
     };
   }

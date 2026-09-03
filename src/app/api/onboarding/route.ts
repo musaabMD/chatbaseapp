@@ -4,7 +4,7 @@ import { requireUser, requireWorkspace } from "@/lib/auth";
 import { createContextProvider } from "@/lib/context/provider";
 import { getDb } from "@/lib/cloudflare";
 import { createId, normalizeDomain, nowIso, slugify } from "@/lib/utils";
-import { buildInstructionTemplate, type EducationUseCase } from "@/lib/education/templates";
+import { buildInstructionTemplate, type AgentUseCase } from "@/lib/agent/templates";
 import { createAgentRecord } from "@/lib/knowledge/ingestion";
 
 const schema = z.object({
@@ -73,8 +73,8 @@ export async function POST(req: Request) {
 
     const instructions = buildInstructionTemplate({
       agentName: body.agentName,
-      institutionName: body.institutionName || brand?.title || body.workspaceName,
-      useCase: body.useCase as EducationUseCase,
+      organizationName: body.institutionName || brand?.title || body.workspaceName,
+      useCase: body.useCase as AgentUseCase,
       audience: body.audience,
     });
 
@@ -85,8 +85,8 @@ export async function POST(req: Request) {
       audience: body.audience,
       language: body.language || "en",
       instructions,
-      institutionName: body.institutionName,
-      description: `${body.useCase} assistant for ${body.institutionName}`,
+      organizationName: body.institutionName,
+      description: `${body.useCase} agent for ${body.institutionName}`,
     });
 
     return NextResponse.json({

@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { GuestDemoButton } from "@/components/auth/guest-demo-button";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -38,9 +39,15 @@ export default function LoginPage() {
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle className="font-[family-name:var(--font-display)] text-2xl">Welcome back</CardTitle>
-          <CardDescription>Log in to your Campusly workspace.</CardDescription>
+          <CardDescription>Log in — or try the demo without an account.</CardDescription>
         </CardHeader>
         <CardContent>
+          <GuestDemoButton className="mb-4 w-full" size="default" variant="default" label="Continue as guest" />
+          <div className="mb-4 flex items-center gap-3 text-xs text-[var(--muted)]">
+            <div className="h-px flex-1 bg-[var(--border)]" />
+            or log in
+            <div className="h-px flex-1 bg-[var(--border)]" />
+          </div>
           <form className="space-y-4" onSubmit={onSubmit}>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>

@@ -64,7 +64,9 @@ export function ModelSettingsForm({
       <Card>
         <CardHeader>
           <CardTitle>Model settings</CardTitle>
-          <CardDescription>Choose the LLM and generation parameters.</CardDescription>
+          <CardDescription>
+            OpenRouter-first model gateway (also Workers AI / OpenAI). Set OPENROUTER_API_KEY for live models.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">

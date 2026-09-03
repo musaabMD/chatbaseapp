@@ -251,17 +251,24 @@ export async function createAgentRecord(input: {
   audience?: string;
   instructions?: string;
   institutionName?: string;
+  organizationName?: string;
+  status?: string;
+  modelProvider?: string;
+  modelId?: string;
 }) {
   const db = await getDb();
   const id = createId("agent");
   const slug = slugify(input.name) || createId("a");
   const publicSlug = `${slug}-${id.slice(-6)}`;
+  const { welcomeMessageFor } = await import("@/lib/agent/templates");
+  const welcome = welcomeMessageFor(input.useCase, input.name);
 
   await db
     .prepare(
       `INSERT INTO agents
-      (id, workspace_id, name, slug, public_slug, description, use_case, status, language, audience, instructions, widget_config, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)`,
+      (id, workspace_id, name, slug, public_slug, description, use_case, status, language, audience, instructions,
+       model_provider, model_id, widget_config, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -271,18 +278,21 @@ export async function createAgentRecord(input: {
       publicSlug,
       input.description || null,
       input.useCase,
+      input.status || "draft",
       input.language || "en",
       input.audience || null,
       input.instructions || null,
+      input.modelProvider || "openrouter",
+      input.modelId || "openai/gpt-4o-mini",
       JSON.stringify({
         position: "bottom-right",
         primaryColor: "#0C5C4C",
-        welcomeMessage: `Hi! I'm ${input.name}. Ask me about programs, admissions, tuition, or student support.`,
+        welcomeMessage: welcome,
         placeholder: "Ask a question...",
         starterQuestions: true,
         showSources: true,
         showFeedback: true,
-        proactiveMessage: "Questions about admissions or programs?",
+        proactiveMessage: welcome,
         proactiveDelayMs: 4000,
       }),
       nowIso(),

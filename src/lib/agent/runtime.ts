@@ -2,7 +2,22 @@ import { getDb } from "@/lib/cloudflare";
 import { createLLMProvider } from "@/lib/llm/provider";
 import { buildGroundedContext, retrieveChunks } from "@/lib/rag/retrieve";
 import { createId, nowIso, safeJsonParse } from "@/lib/utils";
-import { STARTER_QUESTIONS, type EducationUseCase } from "@/lib/education/templates";
+import { STARTER_QUESTIONS } from "@/lib/agent/templates";
+import { parseGuardrails, evaluateGuardrails } from "@/lib/agent/guardrails";
+import { composeSystemPrompt } from "@/lib/agent/prompt";
+import { getOrStartProcedureRun, advanceProcedureRun } from "@/lib/agent/procedures";
+import {
+  actionsToPrompt,
+  detectActionIntent,
+  executeAction,
+  listAgentActions,
+  type VerifiedIdentity,
+} from "@/lib/agent/actions";
+import {
+  textToParts,
+  type MessagePart,
+  type AgentMessagePayload,
+} from "@/lib/agent/message-parts";
 
 export type ChatCitation = {
   title: string;
@@ -15,7 +30,8 @@ export type StructuredUi =
   | { type: "buttons"; items: Array<{ label: string; action: string; value?: string }> }
   | { type: "lead_form"; fields: string[]; title: string }
   | { type: "course_cards"; items: Array<{ title: string; subtitle?: string; href?: string }> }
-  | { type: "cta"; label: string; href: string };
+  | { type: "cta"; label: string; href: string }
+  | { type: "order_status"; orderId: string; status: string; eta?: string; trackingUrl?: string };
 
 export async function runAgentTurn(input: {
   workspaceId: string;
@@ -27,25 +43,42 @@ export async function runAgentTurn(input: {
   pageTitle?: string;
   channel?: string;
   debug?: boolean;
+  verifiedIdentity?: VerifiedIdentity | null;
+  language?: string;
 }) {
   const db = await getDb();
   const agent = await db
-    .prepare(`SELECT * FROM agents WHERE id = ? AND workspace_id = ?`)
+    .prepare(`SELECT a.*, w.institution_name, w.name as workspace_name
+      FROM agents a
+      JOIN workspaces w ON w.id = a.workspace_id
+      WHERE a.id = ? AND a.workspace_id = ?`)
     .bind(input.agentId, input.workspaceId)
     .first<{
       id: string;
       name: string;
       instructions: string | null;
       model_id: string;
+      model_provider: string;
+      fallback_model_id: string | null;
       temperature: number;
       max_tokens: number;
       knowledge_mode: string;
       show_citations: number;
       use_case: string;
+      guardrails: string | null;
+      published_version_id: string | null;
       institution_name?: string;
+      workspace_name?: string;
     }>();
 
   if (!agent) throw new Error("Agent not found");
+
+  const rules = parseGuardrails(agent.guardrails);
+  const preModel = evaluateGuardrails({
+    rules,
+    scope: "pre_model",
+    message: input.message,
+  });
 
   let conversationId = input.conversationId;
   if (!conversationId) {
@@ -53,8 +86,9 @@ export async function runAgentTurn(input: {
     await db
       .prepare(
         `INSERT INTO conversations
-        (id, workspace_id, agent_id, contact_id, channel, status, handoff_status, page_url, page_title, message_count, last_message_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'open', 'ai', ?, ?, 0, ?, ?, ?)`,
+        (id, workspace_id, agent_id, contact_id, channel, status, handoff_status, page_url, page_title,
+         message_count, last_message_at, verified_identity, language, agent_version_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'open', 'ai', ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         conversationId,
@@ -65,9 +99,17 @@ export async function runAgentTurn(input: {
         input.pageUrl || null,
         input.pageTitle || null,
         nowIso(),
+        input.verifiedIdentity ? JSON.stringify(input.verifiedIdentity) : null,
+        input.language || null,
+        agent.published_version_id || null,
         nowIso(),
         nowIso(),
       )
+      .run();
+  } else if (input.verifiedIdentity) {
+    await db
+      .prepare(`UPDATE conversations SET verified_identity = ?, updated_at = ? WHERE id = ?`)
+      .bind(JSON.stringify(input.verifiedIdentity), nowIso(), conversationId)
       .run();
   }
 
@@ -78,6 +120,20 @@ export async function runAgentTurn(input: {
     )
     .bind(userMessageId, conversationId, input.message, nowIso())
     .run();
+
+  // Immediate escalation path (human request / blocked)
+  if (preModel.escalate || !preModel.allow) {
+    return finalizeEscalation({
+      db,
+      conversationId,
+      workspaceId: input.workspaceId,
+      agentId: input.agentId,
+      message: preModel.message || "Connecting you with a human teammate.",
+      reason: preModel.escalate ? "human_request" : "guardrail_block",
+      started: Date.now(),
+      useCase: agent.use_case,
+    });
+  }
 
   const started = Date.now();
   const chunks = await retrieveChunks({
@@ -93,24 +149,89 @@ export async function runAgentTurn(input: {
       ? `Current page: ${input.pageTitle || ""} ${input.pageUrl || ""}`.trim()
       : "";
 
-  const knowledgePolicy =
-    agent.knowledge_mode === "strict"
-      ? "Strict knowledge mode: answer institutional facts only from provided sources. If missing, say you cannot confirm."
-      : agent.knowledge_mode === "general"
-        ? "General knowledge is allowed for explanations, but institutional facts must come from sources."
-        : "Balanced mode: prefer sources for institutional facts; you may use general education knowledge for explanations.";
+  let procedurePrompt: string | null = null;
+  let procedureRunId: string | null = null;
+  try {
+    const proc = await getOrStartProcedureRun({
+      workspaceId: input.workspaceId,
+      agentId: input.agentId,
+      conversationId,
+      message: input.message,
+    });
+    if (proc) {
+      procedurePrompt = proc.prompt;
+      procedureRunId = proc.runId;
+      if (proc.shouldEscalate) {
+        return finalizeEscalation({
+          db,
+          conversationId,
+          workspaceId: input.workspaceId,
+          agentId: input.agentId,
+          message: "This request needs a human teammate. I've queued it with the conversation context.",
+          reason: "procedure_escalation",
+          started,
+          useCase: agent.use_case,
+        });
+      }
+    }
+  } catch {
+    /* procedure_runs table may be missing before migration — continue without */
+  }
 
-  const system = `${agent.instructions || "You are a helpful education assistant."}
+  const actions = await listAgentActions(input.agentId);
+  const actionsPrompt = actions.length ? actionsToPrompt(actions) : null;
 
-${knowledgePolicy}
+  // Optional tool execution before model
+  let toolResultBlock = "";
+  let orderWidget: StructuredUi | null = null;
+  const intent = detectActionIntent(input.message, actions);
+  if (intent) {
+    const result = await executeAction({
+      workspaceId: input.workspaceId,
+      agentId: input.agentId,
+      conversationId,
+      action: intent.action,
+      args: intent.args,
+      verifiedIdentity: input.verifiedIdentity,
+      guardrails: rules,
+    });
+    if (result.ok) {
+      toolResultBlock = `\nTool result (${intent.action.slug}):\n${JSON.stringify(result.output, null, 2)}`;
+      const out = result.output as {
+        orderId?: string;
+        status?: string;
+        eta?: string;
+        trackingUrl?: string;
+      };
+      if (out.orderId && out.status) {
+        orderWidget = {
+          type: "order_status",
+          orderId: out.orderId,
+          status: out.status,
+          eta: out.eta,
+          trackingUrl: out.trackingUrl,
+        };
+      }
+    } else if (result.needsConfirmation) {
+      toolResultBlock = `\nAction ${intent.action.slug} requires confirmation before running.`;
+    } else {
+      toolResultBlock = `\nAction ${intent.action.slug} failed: ${result.error}`;
+    }
+  }
 
-${pageContext}
-
-Retrieved institutional knowledge:
-${grounded || "(no knowledge retrieved)"}
-
-When useful, suggest next steps such as applying, booking advising, or capturing contact details.
-Return plain Markdown. Do not invent sources.`;
+  const system = composeSystemPrompt({
+    agentName: agent.name,
+    organizationName: agent.institution_name || agent.workspace_name,
+    instructions: agent.instructions,
+    knowledgeMode: agent.knowledge_mode,
+    knowledgeContext: grounded + toolResultBlock,
+    pageContext,
+    guardrails: rules,
+    procedurePrompt,
+    actionsPrompt,
+    verifiedIdentity: input.verifiedIdentity as Record<string, string> | null | undefined,
+    language: input.language,
+  });
 
   const history = await db
     .prepare(
@@ -131,10 +252,41 @@ Return plain Markdown. Do not invent sources.`;
     ],
     {
       model: agent.model_id,
+      provider: agent.model_provider,
       temperature: agent.temperature,
       maxTokens: agent.max_tokens,
+      fallbackModel: agent.fallback_model_id || undefined,
     },
   );
+
+  let replyText = result.text;
+  const postModel = evaluateGuardrails({
+    rules,
+    scope: "post_model",
+    message: replyText,
+    confidence: chunks.length ? Math.min(0.95, 0.45 + (chunks[0]?.score || 0) * 0.2) : 0.25,
+  });
+  if (postModel.matched.some((r) => r.action === "rewrite" || r.action === "block")) {
+    // Only replace when the model invented a forbidden claim — not when echoing our own guardrail copy
+    const rewriteMsg = postModel.message;
+    if (rewriteMsg && replyText !== rewriteMsg && !replyText.includes(rewriteMsg)) {
+      replyText = rewriteMsg;
+    } else if (!postModel.allow) {
+      replyText = rewriteMsg || "I can't help with that request.";
+    }
+  }
+  if (postModel.escalate) {
+    return finalizeEscalation({
+      db,
+      conversationId,
+      workspaceId: input.workspaceId,
+      agentId: input.agentId,
+      message: replyText + "\n\n" + (postModel.message || "I've flagged this for a human teammate."),
+      reason: "post_model_escalation",
+      started,
+      useCase: agent.use_case,
+    });
+  }
 
   const citations: ChatCitation[] = agent.show_citations
     ? chunks.slice(0, 3).map((c) => ({
@@ -144,34 +296,50 @@ Return plain Markdown. Do not invent sources.`;
       }))
     : [];
 
-  const structuredUi = inferStructuredUi(input.message, agent.use_case as EducationUseCase);
-  const confidence = chunks.length ? Math.min(0.95, 0.45 + chunks[0]!.score * 0.2) : 0.25;
+  const structuredUi =
+    orderWidget || inferStructuredUi(input.message, agent.use_case);
+  const partsPayload = buildMessageParts(replyText, citations, structuredUi);
+  const confidence = chunks.length ? Math.min(0.95, 0.45 + (chunks[0]?.score || 0) * 0.2) : 0.25;
   const assistantMessageId = createId("msg");
   const latency = Date.now() - started;
 
   await db
     .prepare(
       `INSERT INTO messages
-      (id, conversation_id, role, content, citations, retrieval_trace, structured_ui, model_id, latency_ms, confidence, created_at)
-      VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, conversation_id, role, content, citations, retrieval_trace, structured_ui, parts, model_id, latency_ms, confidence, agent_version_id, created_at)
+      VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       assistantMessageId,
       conversationId,
-      result.text,
+      replyText,
       JSON.stringify(citations),
       JSON.stringify(
         input.debug
-          ? chunks.map((c) => ({ id: c.id, score: c.score, title: c.title, url: c.url }))
-          : { count: chunks.length },
+          ? {
+              chunks: chunks.map((c) => ({ id: c.id, score: c.score, title: c.title, url: c.url })),
+              procedureRunId,
+              tools: intent?.action.slug,
+            }
+          : { count: chunks.length, procedureRunId },
       ),
       JSON.stringify(structuredUi),
+      JSON.stringify(partsPayload.parts),
       result.model,
       latency,
       confidence,
+      agent.published_version_id || null,
       nowIso(),
     )
     .run();
+
+  if (procedureRunId) {
+    try {
+      await advanceProcedureRun(procedureRunId, 1);
+    } catch {
+      /* ignore */
+    }
+  }
 
   await db
     .prepare(
@@ -180,10 +348,11 @@ Return plain Markdown. Do not invent sources.`;
            last_message_at = ?,
            updated_at = ?,
            topic = COALESCE(topic, ?),
-           sentiment = COALESCE(sentiment, 'neutral')
+           sentiment = COALESCE(sentiment, 'neutral'),
+           language = COALESCE(language, ?)
        WHERE id = ?`,
     )
-    .bind(nowIso(), nowIso(), classifyTopic(input.message), conversationId)
+    .bind(nowIso(), nowIso(), classifyTopic(input.message), input.language || null, conversationId)
     .run();
 
   await db
@@ -196,7 +365,7 @@ Return plain Markdown. Do not invent sources.`;
       input.workspaceId,
       input.agentId,
       conversationId,
-      JSON.stringify({ latency_ms: latency, confidence, model: result.model }),
+      JSON.stringify({ latency_ms: latency, confidence, model: result.model, procedureRunId }),
       nowIso(),
     )
     .run();
@@ -204,32 +373,182 @@ Return plain Markdown. Do not invent sources.`;
   return {
     conversationId,
     messageId: assistantMessageId,
-    content: result.text,
+    content: replyText,
+    parts: partsPayload.parts,
     citations,
     structuredUi,
     confidence,
     latencyMs: latency,
     model: result.model,
     retrieval: chunks,
-    starterQuestions: STARTER_QUESTIONS[(agent.use_case as EducationUseCase) || "custom"],
+    procedureRunId,
+    starterQuestions: STARTER_QUESTIONS[agent.use_case] || STARTER_QUESTIONS.custom,
   };
+}
+
+async function finalizeEscalation(input: {
+  db: D1Database;
+  conversationId: string;
+  workspaceId: string;
+  agentId: string;
+  message: string;
+  reason: string;
+  started: number;
+  useCase: string;
+}) {
+  const assistantMessageId = createId("msg");
+  const latency = Date.now() - input.started;
+  const parts = textToParts(input.message, [
+    {
+      type: "button_group",
+      items: [{ label: "Wait for human", action: "handoff" }],
+    },
+  ]);
+
+  await input.db
+    .prepare(
+      `INSERT INTO messages
+      (id, conversation_id, role, content, structured_ui, parts, latency_ms, confidence, created_at)
+      VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      assistantMessageId,
+      input.conversationId,
+      input.message,
+      JSON.stringify({
+        type: "buttons",
+        items: [{ label: "Wait for human", action: "handoff" }],
+      }),
+      JSON.stringify(parts.parts),
+      latency,
+      1,
+      nowIso(),
+    )
+    .run();
+
+  await input.db
+    .prepare(
+      `UPDATE conversations
+       SET handoff_status = 'escalated', status = 'open', last_message_at = ?, updated_at = ?,
+           message_count = message_count + 2, metadata = ?
+       WHERE id = ?`,
+    )
+    .bind(
+      nowIso(),
+      nowIso(),
+      JSON.stringify({ escalation_reason: input.reason }),
+      input.conversationId,
+    )
+    .run();
+
+  const ticketId = createId("tkt");
+  await input.db
+    .prepare(
+      `INSERT INTO tickets (id, workspace_id, agent_id, conversation_id, subject, status, priority, summary, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'open', 'normal', ?, ?, ?)`,
+    )
+    .bind(
+      ticketId,
+      input.workspaceId,
+      input.agentId,
+      input.conversationId,
+      `Escalation: ${input.reason}`,
+      input.message.slice(0, 500),
+      nowIso(),
+      nowIso(),
+    )
+    .run();
+
+  return {
+    conversationId: input.conversationId,
+    messageId: assistantMessageId,
+    content: input.message,
+    parts: parts.parts,
+    citations: [] as ChatCitation[],
+    structuredUi: {
+      type: "buttons" as const,
+      items: [{ label: "Wait for human", action: "handoff" }],
+    },
+    confidence: 1,
+    latencyMs: latency,
+    model: "escalation",
+    escalated: true,
+    ticketId,
+    starterQuestions: STARTER_QUESTIONS[input.useCase] || STARTER_QUESTIONS.custom,
+  };
+}
+
+function buildMessageParts(
+  text: string,
+  citations: ChatCitation[],
+  structuredUi: StructuredUi | null,
+): AgentMessagePayload {
+  const extra: MessagePart[] = [];
+  if (citations.length) {
+    extra.push({
+      type: "citations",
+      items: citations.map((c) => ({ title: c.title, url: c.url, snippet: c.snippet })),
+    });
+  }
+  if (structuredUi?.type === "buttons") {
+    extra.push({ type: "button_group", items: structuredUi.items });
+  }
+  if (structuredUi?.type === "lead_form") {
+    extra.push({
+      type: "form",
+      title: structuredUi.title,
+      formId: "lead",
+      fields: structuredUi.fields.map((name) => ({
+        name,
+        label: name,
+        required: name === "email" || name === "name",
+      })),
+    });
+  }
+  if (structuredUi?.type === "course_cards") {
+    for (const item of structuredUi.items) {
+      extra.push({
+        type: "course_card",
+        title: item.title,
+        subtitle: item.subtitle,
+        href: item.href,
+      });
+    }
+  }
+  if (structuredUi?.type === "order_status") {
+    extra.push({
+      type: "order_status",
+      orderId: structuredUi.orderId,
+      status: structuredUi.status,
+      eta: structuredUi.eta,
+      trackingUrl: structuredUi.trackingUrl,
+    });
+  }
+  if (structuredUi?.type === "cta") {
+    extra.push({ type: "cta", label: structuredUi.label, href: structuredUi.href });
+  }
+  return textToParts(text, extra);
 }
 
 function classifyTopic(message: string) {
   const m = message.toLowerCase();
-  if (/(tuition|fee|cost|price)/.test(m)) return "Tuition";
+  if (/(refund|return|exchange)/.test(m)) return "Returns";
+  if (/(order|shipping|track|delivery)/.test(m)) return "Orders";
+  if (/(price|pricing|plan|subscription|billing)/.test(m)) return "Billing";
+  if (/(demo|sales|buy|purchase)/.test(m)) return "Sales";
+  if (/(tuition|fee|cost)/.test(m)) return "Tuition";
   if (/(scholarship|financial aid|aid)/.test(m)) return "Financial Aid";
   if (/(deadline|apply|admission|gpa)/.test(m)) return "Admissions";
   if (/(visa|ielts|international)/.test(m)) return "International Students";
   if (/(course|program|prerequisite)/.test(m)) return "Programs";
-  if (/(housing|dorm|campus)/.test(m)) return "Campus Life";
-  if (/(lms|password|login|portal)/.test(m)) return "Technical Support";
+  if (/(password|login|reset)/.test(m)) return "Account Access";
+  if (/(human|agent|representative)/.test(m)) return "Escalation";
   return "General";
 }
 
-function inferStructuredUi(message: string, useCase: EducationUseCase): StructuredUi | null {
+function inferStructuredUi(message: string, useCase: string): StructuredUi | null {
   const m = message.toLowerCase();
-  if (/(apply|application|enroll)/.test(m)) {
+  if (/(apply|application|enroll)/.test(m) && /admission|student|course/.test(useCase + m)) {
     return {
       type: "buttons",
       items: [
@@ -238,12 +557,14 @@ function inferStructuredUi(message: string, useCase: EducationUseCase): Structur
       ],
     };
   }
-  if (/(brochure|contact me|interested|counselor|advisor)/.test(m)) {
-    return {
-      type: "lead_form",
-      title: "Share your details",
-      fields: ["name", "email", "program", "intake"],
-    };
+  if (/(brochure|contact me|interested|demo|talk to sales)/.test(m) || useCase === "sales") {
+    if (/(brochure|contact|demo|interested|sales)/.test(m)) {
+      return {
+        type: "lead_form",
+        title: "Share your details",
+        fields: ["name", "email", "company", "use_case"],
+      };
+    }
   }
   if (/(course|program).*(show|list|recommend)|show me .*course/.test(m) || useCase === "course_advisor") {
     if (/(course|program)/.test(m)) {

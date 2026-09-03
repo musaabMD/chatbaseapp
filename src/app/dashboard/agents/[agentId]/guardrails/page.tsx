@@ -1,17 +1,8 @@
 import { notFound } from "next/navigation";
 import { requireWorkspace } from "@/lib/auth";
 import { getAgentForWorkspace } from "@/lib/agents";
-import { GuardrailsEditor, type GuardrailsConfig } from "@/components/dashboard/guardrails-editor";
-import { safeJsonParse } from "@/lib/utils";
-
-const DEFAULT_GUARDRAILS: GuardrailsConfig = {
-  blockedTopics: ["illegal activity", "explicit content"],
-  maxResponseLength: 2000,
-  requireCitations: true,
-  piiFilter: true,
-  blockExternalLinks: false,
-  escalationKeywords: ["speak to a human", "complaint", "refund"],
-};
+import { GuardrailsEditor } from "@/components/dashboard/guardrails-editor";
+import { parseGuardrails } from "@/lib/agent/guardrails";
 
 export default async function GuardrailsPage({
   params,
@@ -23,7 +14,7 @@ export default async function GuardrailsPage({
   const agent = await getAgentForWorkspace(agentId, workspace.id);
   if (!agent) notFound();
 
-  const guardrails = safeJsonParse<GuardrailsConfig>(agent.guardrails, DEFAULT_GUARDRAILS);
+  const rules = parseGuardrails(agent.guardrails);
 
-  return <GuardrailsEditor agentId={agentId} initialGuardrails={guardrails} />;
+  return <GuardrailsEditor agentId={agentId} initialGuardrails={rules} />;
 }

@@ -18,6 +18,10 @@ export type ChatMessageView = {
     items?: Array<{ label?: string; title?: string; subtitle?: string; action?: string; href?: string }>;
     label?: string;
     href?: string;
+    orderId?: string;
+    status?: string;
+    eta?: string;
+    trackingUrl?: string;
   } | null;
 };
 
@@ -210,6 +214,18 @@ export function ChatPanel({
                 ))}
               </div>
             )}
+            {m.structuredUi?.type === "order_status" && (
+              <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/50 p-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wide opacity-70">Order status</div>
+                <div className="mt-1 font-medium">
+                  {(m.structuredUi as { orderId?: string }).orderId} ·{" "}
+                  {(m.structuredUi as { status?: string }).status}
+                </div>
+                {(m.structuredUi as { eta?: string }).eta && (
+                  <div className="text-xs opacity-70">ETA: {(m.structuredUi as { eta?: string }).eta}</div>
+                )}
+              </div>
+            )}
             {m.role === "assistant" && !m.id.startsWith("err_") && !m.id.startsWith("local_") && (
               <div className="mt-2 flex gap-2">
                 <button onClick={() => feedback(m.id, 1)} className="opacity-60 hover:opacity-100">
@@ -236,7 +252,7 @@ export function ChatPanel({
           void send(input);
         }}
       >
-        <Input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask about admissions, tuition, programs…" />
+        <Input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask about orders, policies, pricing…" />
         <Button type="submit" disabled={busy}>
           Send
         </Button>
