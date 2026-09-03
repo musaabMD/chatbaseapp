@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/cloudflare";
 import { evaluateGuardrails, type GuardrailRule } from "@/lib/agent/guardrails";
+import { runCommerceAction } from "@/lib/agent/commerce";
 import { createId, nowIso, safeJsonParse } from "@/lib/utils";
 
 export type ActionRow = {
@@ -112,8 +113,28 @@ export async function executeAction(input: {
 
   try {
     let output: unknown;
+    let parts: unknown[] | undefined;
 
-    if (config.demo || input.action.slug === "lookup_order") {
+    const commerce = runCommerceAction({
+      slug: input.action.slug,
+      args: trustedArgs,
+      verifiedIdentity: input.verifiedIdentity,
+      confirmed: input.confirmed,
+    });
+    if (commerce) {
+      if (commerce.needsConfirmation) {
+        return {
+          ok: false as const,
+          needsConfirmation: true,
+          error: commerce.error || "Confirmation required",
+        };
+      }
+      if (!commerce.ok) {
+        return { ok: false as const, error: commerce.error || "Action not permitted" };
+      }
+      output = commerce.output;
+      parts = commerce.parts;
+    } else if (config.demo || input.action.slug === "lookup_order") {
       const mock = config.mockResponse || {
         orderId: String(trustedArgs.order_id || "ORD-1001"),
         status: "Shipped",
@@ -166,7 +187,7 @@ export async function executeAction(input: {
       )
       .run();
 
-    return { ok: true as const, executionId: execId, output, latencyMs: latency };
+    return { ok: true as const, executionId: execId, output, parts, latencyMs: latency };
   } catch (error) {
     await db
       .prepare(
@@ -199,13 +220,55 @@ export async function executeAction(input: {
 export function detectActionIntent(message: string, actions: ActionRow[]): { action: ActionRow; args: Record<string, unknown> } | null {
   const m = message.toLowerCase();
   const orderMatch = message.match(/\b(?:order|#)\s*([A-Z0-9-]{4,})\b/i);
-  for (const action of actions) {
-    if (action.slug === "lookup_order" && /(where is my order|order status|track.*(order|package)|lookup order)/i.test(m)) {
-      return {
-        action,
-        args: { order_id: orderMatch?.[1] || "ORD-1001" },
-      };
-    }
+  const detectors: Array<{
+    slugs: string[];
+    test: RegExp;
+    args: () => Record<string, unknown>;
+  }> = [
+    {
+      slugs: ["lookup_order", "get_order_status"],
+      test: /(where is my order|order status|track.*(order|package)|lookup order)/i,
+      args: () => ({ order_id: orderMatch?.[1] || "ORD-1001" }),
+    },
+    {
+      slugs: ["search_products", "recommend_products"],
+      test: /(recommend|suggest).*(product|item)|looking for|under \$?\d+/i,
+      args: () => {
+        const budget = message.match(/\$?(\d{2,5})/);
+        return { query: message.slice(0, 120), budget: budget ? Number(budget[1]) : 100 };
+      },
+    },
+    {
+      slugs: ["get_subscription", "lookup_subscription"],
+      test: /(my subscription|current plan|what plan am i)/i,
+      args: () => ({}),
+    },
+    {
+      slugs: ["update_subscription"],
+      test: /(upgrade|downgrade|change).*(plan|subscription)/i,
+      args: () => ({ desired_plan: /business/i.test(m) ? "Business" : "Pro" }),
+    },
+    {
+      slugs: ["get_availability", "get_appointment_slots"],
+      test: /(available|availability|book.*(slot|class|appointment)|appointment slots)/i,
+      args: () => ({ service: "Consultation" }),
+    },
+    {
+      slugs: ["get_room_rates"],
+      test: /(room rates|hotel rates|rooms available|nightly rate)/i,
+      args: () => ({}),
+    },
+    {
+      slugs: ["check_return_eligibility", "create_return", "issue_refund"],
+      test: /(return this|start a return|refund my|exchange my)/i,
+      args: () => ({ order_id: orderMatch?.[1] || "ORD-1001" }),
+    },
+  ];
+
+  for (const det of detectors) {
+    if (!det.test.test(m)) continue;
+    const action = actions.find((a) => det.slugs.includes(a.slug));
+    if (action) return { action, args: det.args() };
   }
   return null;
 }

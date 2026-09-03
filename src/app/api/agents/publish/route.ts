@@ -11,6 +11,7 @@ export async function POST(req: Request) {
       .object({
         agentId: z.string(),
         label: z.string().optional(),
+        requirePassingTests: z.boolean().optional(),
       })
       .parse(await req.json());
 
@@ -25,6 +26,7 @@ export async function POST(req: Request) {
       agentId: body.agentId,
       label: body.label,
       createdBy: user.id,
+      requirePassingTests: body.requirePassingTests,
     });
 
     return NextResponse.json(version);
@@ -56,7 +58,14 @@ export async function GET(req: Request) {
       .bind(agentId)
       .all();
 
-    return NextResponse.json({ versions: versions.results || [] });
+    const gates = await db
+      .prepare(
+        `SELECT id, suite_id, passed, failed, total, blocked, notes, created_at FROM publish_gates WHERE agent_id = ? ORDER BY created_at DESC LIMIT 10`,
+      )
+      .bind(agentId)
+      .all();
+
+    return NextResponse.json({ versions: versions.results || [], gates: gates.results || [] });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed" },

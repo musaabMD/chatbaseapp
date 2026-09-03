@@ -57,7 +57,12 @@
     "#campusly-input:focus { border-color: #0c5c4c; }" +
     "#campusly-send { border: none; border-radius: 10px; padding: 10px 16px; color: #fff; cursor: pointer; font-size: 14px; font-weight: 500; }" +
     "#campusly-send:disabled { opacity: 0.5; cursor: not-allowed; }" +
-    ".campusly-loading { font-size: 13px; color: #5b6f68; padding: 8px 14px; }";
+    ".campusly-loading { font-size: 13px; color: #5b6f68; padding: 8px 14px; }" +
+    ".campusly-part { margin-top: 8px; padding: 10px; border-radius: 12px; background: #f0f7f4; border: 1px solid #c9dbd3; font-size: 13px; }" +
+    ".campusly-part a { color: #0c5c4c; }" +
+    ".campusly-part-title { font-weight: 600; margin-bottom: 4px; }" +
+    ".campusly-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }" +
+    ".campusly-btns button { border: 1px solid #c9dbd3; background: #fff; border-radius: 8px; padding: 6px 10px; font-size: 12px; cursor: pointer; }";
   document.head.appendChild(style);
 
   var launcher = document.createElement("button");
@@ -100,6 +105,97 @@
   root.appendChild(launcher);
   root.appendChild(panel);
 
+  function renderPart(part, parent) {
+    if (!part || !part.type) return;
+    if (part.type === "text") return;
+    var box = document.createElement("div");
+    box.className = "campusly-part";
+    if (part.type === "order_status") {
+      box.innerHTML =
+        '<div class="campusly-part-title">Order ' +
+        escapeHtml(part.orderId || "") +
+        "</div>" +
+        "<div>Status: " +
+        escapeHtml(part.status || "") +
+        "</div>" +
+        (part.eta ? "<div>ETA: " + escapeHtml(part.eta) + "</div>" : "") +
+        (part.trackingUrl
+          ? '<div><a href="' +
+            escapeAttr(part.trackingUrl) +
+            '" target="_blank" rel="noopener">Track package</a></div>'
+          : "");
+    } else if (part.type === "product_card" || part.type === "course_card") {
+      box.innerHTML =
+        '<div class="campusly-part-title">' +
+        escapeHtml(part.title || "") +
+        "</div>" +
+        (part.subtitle ? "<div>" + escapeHtml(part.subtitle) + "</div>" : "") +
+        (part.price ? "<div>" + escapeHtml(part.price) + "</div>" : "") +
+        (part.href
+          ? '<div><a href="' + escapeAttr(part.href) + '" target="_blank" rel="noopener">View</a></div>'
+          : "");
+    } else if (part.type === "booking_card") {
+      box.innerHTML =
+        '<div class="campusly-part-title">' +
+        escapeHtml(part.title || "Booking") +
+        "</div>" +
+        (part.startsAt ? "<div>" + escapeHtml(part.startsAt) + "</div>" : "") +
+        (part.location ? "<div>" + escapeHtml(part.location) + "</div>" : "");
+    } else if (part.type === "account_card") {
+      var fields = (part.fields || [])
+        .map(function (f) {
+          return "<div><strong>" + escapeHtml(f.label) + ":</strong> " + escapeHtml(f.value) + "</div>";
+        })
+        .join("");
+      box.innerHTML = '<div class="campusly-part-title">' + escapeHtml(part.title || "Account") + "</div>" + fields;
+    } else if (part.type === "button_group") {
+      var row = document.createElement("div");
+      row.className = "campusly-btns";
+      (part.items || []).forEach(function (item) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.textContent = item.label || "Choose";
+        b.addEventListener("click", function () {
+          if (item.href) window.open(item.href, "_blank");
+          else sendMessage(item.label || item.value || item.action);
+        });
+        row.appendChild(b);
+      });
+      parent.appendChild(row);
+      return;
+    } else if (part.type === "citations") {
+      box.innerHTML =
+        '<div class="campusly-part-title">Sources</div>' +
+        (part.items || [])
+          .map(function (c) {
+            return (
+              "<div>" +
+              escapeHtml(c.title || "Source") +
+              (c.url ? ' — <a href="' + escapeAttr(c.url) + '" target="_blank" rel="noopener">link</a>' : "") +
+              "</div>"
+            );
+          })
+          .join("");
+    } else if (part.type === "cta") {
+      box.innerHTML =
+        '<a href="' + escapeAttr(part.href || "#") + '" target="_blank" rel="noopener">' + escapeHtml(part.label || "Open") + "</a>";
+    } else {
+      return;
+    }
+    parent.appendChild(box);
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+  function escapeAttr(s) {
+    return escapeHtml(s).replace(/'/g, "&#39;");
+  }
+
   function renderMessages() {
     messagesEl.innerHTML = "";
     if (state.messages.length === 0 && state.config.welcomeMessage) {
@@ -114,7 +210,14 @@
       if (m.role === "user") {
         el.style.background = state.config.primaryColor;
       }
-      el.textContent = m.content;
+      var text = document.createElement("div");
+      text.textContent = m.content || "";
+      el.appendChild(text);
+      if (m.parts && m.parts.length) {
+        m.parts.forEach(function (p) {
+          renderPart(p, el);
+        });
+      }
       messagesEl.appendChild(el);
     });
     if (state.busy) {
@@ -159,6 +262,7 @@
         state.messages.push({
           role: "assistant",
           content: data.content || "",
+          parts: data.parts || [],
         });
       })
       .catch(function (err) {

@@ -196,8 +196,6 @@ async function seedDemoAgents(workspaceId: string) {
       "lookup_order",
       "Demo order lookup — returns mock status for playground testing",
       JSON.stringify({
-        url: "https://httpbin.org/json",
-        method: "GET",
         demo: true,
         mockResponse: {
           orderId: "{{order_id}}",
@@ -212,6 +210,83 @@ async function seedDemoAgents(workspaceId: string) {
       }),
       nowIso(),
       nowIso(),
+    )
+    .run();
+
+  const commerceActions = [
+    {
+      name: "Recommend products",
+      slug: "recommend_products",
+      description: "Filter catalog by budget/use case and return product cards",
+      sensitive: 0,
+      confirm: 0,
+    },
+    {
+      name: "Get subscription",
+      slug: "get_subscription",
+      description: "Lookup current plan for verified customer",
+      sensitive: 0,
+      confirm: 0,
+    },
+    {
+      name: "Update subscription",
+      slug: "update_subscription",
+      description: "Upgrade/downgrade plan after confirmation",
+      sensitive: 1,
+      confirm: 1,
+    },
+    {
+      name: "Check return eligibility",
+      slug: "check_return_eligibility",
+      description: "Policy check before returns/refunds",
+      sensitive: 0,
+      confirm: 0,
+    },
+    {
+      name: "Get appointment slots",
+      slug: "get_appointment_slots",
+      description: "Availability for booking workflows",
+      sensitive: 0,
+      confirm: 0,
+    },
+    {
+      name: "Get room rates",
+      slug: "get_room_rates",
+      description: "Hospitality rates and availability",
+      sensitive: 0,
+      confirm: 0,
+    },
+  ];
+
+  for (const action of commerceActions) {
+    await db
+      .prepare(
+        `INSERT INTO actions
+        (id, agent_id, name, slug, description, type, enabled, requires_confirmation, is_sensitive, config, input_schema, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'http', 1, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        createId("act"),
+        support.id,
+        action.name,
+        action.slug,
+        action.description,
+        action.confirm,
+        action.sensitive,
+        JSON.stringify({ demo: true }),
+        JSON.stringify({ type: "object", properties: {} }),
+        nowIso(),
+        nowIso(),
+      )
+      .run();
+  }
+
+  await db
+    .prepare(`UPDATE agents SET brand_voice = ?, updated_at = ? WHERE id = ?`)
+    .bind(
+      "Warm, concise, and professional. Prefer plain language. Never invent policies or promises.",
+      nowIso(),
+      support.id,
     )
     .run();
 

@@ -13,6 +13,7 @@ export type AgentRecord = {
   audience: string | null;
   avatar_url: string | null;
   instructions: string | null;
+  brand_voice?: string | null;
   tone: string;
   model_provider: string;
   model_id: string;

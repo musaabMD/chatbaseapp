@@ -20,6 +20,8 @@ import {
 } from "@/lib/agent/message-parts";
 import { escalateConversation } from "@/lib/agent/escalation";
 import { saveAgentTrace } from "@/lib/agent/traces";
+import { classifyTopic, classifySentiment, detectLanguage } from "@/lib/agent/classify";
+import { recordConversationSignals } from "@/lib/agent/knowledge-gaps";
 
 export type ChatCitation = {
   title: string;
@@ -68,6 +70,7 @@ export async function runAgentTurn(input: {
       show_citations: number;
       use_case: string;
       guardrails: string | null;
+      brand_voice: string | null;
       published_version_id: string | null;
       institution_name?: string;
       workspace_name?: string;
@@ -215,6 +218,7 @@ export async function runAgentTurn(input: {
   // Optional tool execution before model
   let toolResultBlock = "";
   let orderWidget: StructuredUi | null = null;
+  let commerceParts: MessagePart[] = [];
   const intent = detectActionIntent(input.message, actions);
   if (intent) {
     const result = await executeAction({
@@ -243,6 +247,9 @@ export async function runAgentTurn(input: {
           trackingUrl: out.trackingUrl,
         };
       }
+      if (Array.isArray(result.parts)) {
+        commerceParts = result.parts as MessagePart[];
+      }
     } else if (result.needsConfirmation) {
       toolResultBlock = `\nAction ${intent.action.slug} requires confirmation before running.`;
     } else {
@@ -254,6 +261,7 @@ export async function runAgentTurn(input: {
     agentName: agent.name,
     organizationName: agent.institution_name || agent.workspace_name,
     instructions: agent.instructions,
+    brandVoice: agent.brand_voice,
     knowledgeMode: agent.knowledge_mode,
     knowledgeContext: grounded + toolResultBlock,
     pageContext,
@@ -261,7 +269,7 @@ export async function runAgentTurn(input: {
     procedurePrompt,
     actionsPrompt,
     verifiedIdentity: input.verifiedIdentity as Record<string, string> | null | undefined,
-    language: input.language,
+    language: input.language || detectLanguage(input.message),
   });
 
   const history = await db
@@ -331,7 +339,7 @@ export async function runAgentTurn(input: {
 
   const structuredUi =
     orderWidget || inferStructuredUi(input.message, agent.use_case);
-  const partsPayload = buildMessageParts(replyText, citations, structuredUi);
+  const partsPayload = buildMessageParts(replyText, citations, structuredUi, commerceParts);
   const confidence = chunks.length ? Math.min(0.95, 0.45 + (chunks[0]?.score || 0) * 0.2) : 0.25;
   const assistantMessageId = createId("msg");
   const latency = Date.now() - started;
@@ -374,6 +382,10 @@ export async function runAgentTurn(input: {
     }
   }
 
+  const sentiment = classifySentiment(input.message);
+  const topic = classifyTopic(input.message);
+  const language = input.language || detectLanguage(input.message);
+
   await db
     .prepare(
       `UPDATE conversations
@@ -381,12 +393,26 @@ export async function runAgentTurn(input: {
            last_message_at = ?,
            updated_at = ?,
            topic = COALESCE(topic, ?),
-           sentiment = COALESCE(sentiment, 'neutral'),
+           sentiment = ?,
+           sentiment_score = ?,
            language = COALESCE(language, ?)
        WHERE id = ?`,
     )
-    .bind(nowIso(), nowIso(), classifyTopic(input.message), input.language || null, conversationId)
+    .bind(nowIso(), nowIso(), topic, sentiment.label, sentiment.score, language, conversationId)
     .run();
+
+  try {
+    await recordConversationSignals({
+      workspaceId: input.workspaceId,
+      agentId: input.agentId,
+      conversationId,
+      question: input.message,
+      confidence,
+      chunkCount: chunks.length,
+    });
+  } catch {
+    /* knowledge_gaps tables may be missing before migration */
+  }
 
   await db
     .prepare(
@@ -398,7 +424,15 @@ export async function runAgentTurn(input: {
       input.workspaceId,
       input.agentId,
       conversationId,
-      JSON.stringify({ latency_ms: latency, confidence, model: result.model, procedureRunId }),
+      JSON.stringify({
+        latency_ms: latency,
+        confidence,
+        model: result.model,
+        procedureRunId,
+        topic,
+        sentiment: sentiment.label,
+        channel: input.channel || "playground",
+      }),
       nowIso(),
     )
     .run();
@@ -409,7 +443,7 @@ export async function runAgentTurn(input: {
     conversationId,
     messageId: assistantMessageId,
     input: input.message,
-    intent: intent?.action.slug || classifyTopic(input.message),
+    intent: intent?.action.slug || topic,
     retrievedContext: chunks.map((c) => ({ id: c.id, title: c.title, score: c.score, url: c.url })),
     procedureSelection: procedureRunId ? { procedureRunId } : null,
     llmRun: { model: result.model, provider: result.provider, latencyMs: latency },
@@ -558,8 +592,9 @@ function buildMessageParts(
   text: string,
   citations: ChatCitation[],
   structuredUi: StructuredUi | null,
+  extraParts: MessagePart[] = [],
 ): AgentMessagePayload {
-  const extra: MessagePart[] = [];
+  const extra: MessagePart[] = [...extraParts];
   if (citations.length) {
     extra.push({
       type: "citations",
@@ -591,7 +626,7 @@ function buildMessageParts(
       });
     }
   }
-  if (structuredUi?.type === "order_status") {
+  if (structuredUi?.type === "order_status" && !extra.some((p) => p.type === "order_status")) {
     extra.push({
       type: "order_status",
       orderId: structuredUi.orderId,
@@ -604,22 +639,6 @@ function buildMessageParts(
     extra.push({ type: "cta", label: structuredUi.label, href: structuredUi.href });
   }
   return textToParts(text, extra);
-}
-
-function classifyTopic(message: string) {
-  const m = message.toLowerCase();
-  if (/(refund|return|exchange)/.test(m)) return "Returns";
-  if (/(order|shipping|track|delivery)/.test(m)) return "Orders";
-  if (/(price|pricing|plan|subscription|billing)/.test(m)) return "Billing";
-  if (/(demo|sales|buy|purchase)/.test(m)) return "Sales";
-  if (/(tuition|fee|cost)/.test(m)) return "Tuition";
-  if (/(scholarship|financial aid|aid)/.test(m)) return "Financial Aid";
-  if (/(deadline|apply|admission|gpa)/.test(m)) return "Admissions";
-  if (/(visa|ielts|international)/.test(m)) return "International Students";
-  if (/(course|program|prerequisite)/.test(m)) return "Programs";
-  if (/(password|login|reset)/.test(m)) return "Account Access";
-  if (/(human|agent|representative)/.test(m)) return "Escalation";
-  return "General";
 }
 
 function inferStructuredUi(message: string, useCase: string): StructuredUi | null {

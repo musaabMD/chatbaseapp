@@ -4,6 +4,7 @@ import { requireWorkspace } from "@/lib/auth";
 import { getDb } from "@/lib/cloudflare";
 import { getAgentForWorkspace } from "@/lib/agents";
 import { AgentStatusActions } from "@/components/dashboard/agent-status-actions";
+import { PublishGateClient } from "@/components/dashboard/publish-gate-client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -77,6 +78,12 @@ export default async function AgentOverviewPage({
         ))}
       </div>
 
+      <PublishGateClient
+        agentId={agentId}
+        status={agent.status}
+        publishedVersionId={agent.published_version_id}
+      />
+
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
@@ -115,11 +122,13 @@ export default async function AgentOverviewPage({
               ["Add knowledge", `${base}/sources`],
               ["Edit instructions", `${base}/instructions`],
               ["Install widget", `${base}/deploy/widget`],
+              ["Channels", `${base}/deploy/channels`],
+              ["Test suites", `${base}/tests`],
               ["View conversations", `${base}/conversations`],
             ].map(([label, href]) => (
               <Link
                 key={href}
-                href={href}
+                href={href!}
                 className="block rounded-xl bg-[var(--secondary)]/70 px-4 py-3 text-sm hover:bg-[var(--secondary)]"
               >
                 {label}

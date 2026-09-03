@@ -18,6 +18,7 @@ export default async function BrandingSettingsPage({
       agentId={agentId}
       initialBranding={parseBranding(agent.branding)}
       initialAvatarUrl={agent.avatar_url || ""}
+      initialBrandVoice={agent.brand_voice || ""}
     />
   );
 }

@@ -88,9 +88,11 @@ export async function PATCH(req: Request) {
       "show_citations",
       "guardrails",
       "branding",
+      "brand_voice",
       "widget_config",
       "audience",
       "language",
+      "avatar_url",
     ];
 
     for (const key of allowed) {

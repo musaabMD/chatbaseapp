@@ -79,6 +79,20 @@ export default async function InboxDetailPage({
       created_at: string;
     }>();
 
+  const actions = await db
+    .prepare(
+      `SELECT name, status, created_at FROM action_executions WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 8`,
+    )
+    .bind(id)
+    .all<{ name: string; status: string; created_at: string }>();
+
+  const procedures = await db
+    .prepare(
+      `SELECT id, status, current_step, started_at FROM procedure_runs WHERE conversation_id = ? ORDER BY started_at DESC LIMIT 3`,
+    )
+    .bind(id)
+    .all<{ id: string; status: string; current_step: number; started_at: string }>();
+
   const identity = safeJsonParse<Record<string, unknown>>(conversation.verified_identity, {});
 
   return (
@@ -190,6 +204,29 @@ export default async function InboxDetailPage({
                 <div key={n.id} className="rounded-xl border border-[var(--border)] p-2 text-xs">
                   <div>{n.body}</div>
                   <div className="mt-1 text-[var(--muted)]">{new Date(n.created_at).toLocaleString()}</div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Actions & procedures</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-xs">
+              {(actions.results || []).length === 0 && (procedures.results || []).length === 0 && (
+                <p className="text-[var(--muted)]">No tool or procedure activity.</p>
+              )}
+              {(actions.results || []).map((a, i) => (
+                <div key={`${a.name}-${i}`} className="flex justify-between gap-2">
+                  <span>{a.name}</span>
+                  <span className="text-[var(--muted)]">{a.status}</span>
+                </div>
+              ))}
+              {(procedures.results || []).map((p) => (
+                <div key={p.id} className="flex justify-between gap-2">
+                  <span>Procedure · step {p.current_step}</span>
+                  <span className="text-[var(--muted)]">{p.status}</span>
                 </div>
               ))}
             </CardContent>

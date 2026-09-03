@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/cloudflare";
-import { createId, nowIso, safeJsonParse } from "@/lib/utils";
+import { createId, nowIso } from "@/lib/utils";
+import { dispatchHelpdeskHandoff } from "@/lib/agent/helpdesk-adapters";
 
 export type EscalationReason =
   | "human_request"
@@ -168,60 +169,20 @@ export async function escalateConversation(input: EscalationInput) {
     )
     .run();
 
-  // Notify helpdesk adapters (stub — logs channel event)
-  await notifyHelpdeskAdapters({
+  // Notify helpdesk adapters (built-in inbox + connected external helpdesks)
+  await dispatchHelpdeskHandoff({
     workspaceId: input.workspaceId,
     agentId: input.agentId,
     conversationId: input.conversationId,
     escalationId,
     summary: summaryText,
-    destination: input.destination || "inbox",
+    reason: input.reason,
+    priority: input.priority || "normal",
+    transcript: summary.transcriptPreview,
+    customer: summary.customer ? { name: summary.customer } : undefined,
   });
 
   return { escalationId, ticketId, summary, summaryText };
-}
-
-async function notifyHelpdeskAdapters(input: {
-  workspaceId: string;
-  agentId: string;
-  conversationId: string;
-  escalationId: string;
-  summary: string;
-  destination: string;
-}) {
-  const db = await getDb();
-  const integrations = await db
-    .prepare(
-      `SELECT type, name, status, config FROM integrations WHERE workspace_id = ? AND status = 'connected'`,
-    )
-    .bind(input.workspaceId)
-    .all<{ type: string; name: string; config: string | null }>();
-
-  for (const integ of integrations.results || []) {
-    // Adapter stubs: record outbound event; real OAuth providers wire later
-    await db
-      .prepare(
-        `INSERT INTO channel_events
-        (id, workspace_id, agent_id, conversation_id, channel, direction, payload, status, created_at)
-        VALUES (?, ?, ?, ?, ?, 'outbound', ?, 'queued', ?)`,
-      )
-      .bind(
-        createId("cevt"),
-        input.workspaceId,
-        input.agentId,
-        input.conversationId,
-        integ.type,
-        JSON.stringify({
-          adapter: integ.type,
-          escalationId: input.escalationId,
-          summary: input.summary,
-          destination: input.destination,
-          config: safeJsonParse(integ.config, {}),
-        }),
-        nowIso(),
-      )
-      .run();
-  }
 }
 
 export async function takeOverConversation(input: {

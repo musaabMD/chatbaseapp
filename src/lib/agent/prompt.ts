@@ -4,6 +4,7 @@ export type ComposePromptInput = {
   agentName: string;
   organizationName?: string | null;
   instructions: string | null;
+  brandVoice?: string | null;
   knowledgeMode: string;
   knowledgeContext: string;
   pageContext?: string;
@@ -42,6 +43,7 @@ export function composeSystemPrompt(input: ComposePromptInput) {
     "OWNER INSTRUCTIONS:",
     input.instructions || "Provide helpful, accurate customer assistance.",
     "",
+    input.brandVoice ? `BRAND VOICE:\n${input.brandVoice}` : "",
     knowledgePolicy,
     input.language ? `Respond in the customer's language when possible (conversation language: ${input.language}).` : "",
     input.pageContext || "",

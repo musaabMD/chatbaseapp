@@ -7,9 +7,9 @@ import { Badge } from "@/components/ui/card";
 export default async function InboxPage({
   searchParams,
 }: {
-  searchParams: Promise<{ filter?: string }>;
+  searchParams: Promise<{ filter?: string; topic?: string }>;
 }) {
-  const { filter } = await searchParams;
+  const { filter, topic } = await searchParams;
   const { workspace, user } = await requireWorkspace();
   const db = await getDb();
 
@@ -31,6 +31,11 @@ export default async function InboxPage({
     sql += ` AND c.status = 'closed'`;
   } else if (filter === "open") {
     sql += ` AND c.status = 'open'`;
+  }
+
+  if (topic) {
+    sql += ` AND c.topic = ?`;
+    binds.push(topic);
   }
 
   sql += ` ORDER BY c.last_message_at DESC LIMIT 80`;

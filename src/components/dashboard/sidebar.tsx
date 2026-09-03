@@ -22,6 +22,7 @@ const items = [
   { href: "/dashboard", label: "Home", icon: Home },
   { href: "/dashboard/agents", label: "Agents", icon: Bot },
   { href: "/dashboard/inbox", label: "Helpdesk", icon: Inbox },
+  { href: "/dashboard/backstage", label: "Backstage", icon: Activity },
   { href: "/dashboard/contacts", label: "Contacts", icon: Users },
   { href: "/dashboard/analytics", label: "Analytics", icon: LineChart },
   { href: "/dashboard/integrations", label: "Integrations", icon: Plug },
