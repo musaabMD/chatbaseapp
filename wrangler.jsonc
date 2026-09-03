@@ -1,0 +1,71 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"main": ".open-next/worker.js",
+	"name": "campusly",
+	"compatibility_date": "2026-09-02",
+	"compatibility_flags": [
+		"nodejs_compat",
+		"global_fetch_strictly_public"
+	],
+	"assets": {
+		"directory": ".open-next/assets",
+		"binding": "ASSETS"
+	},
+	"services": [
+		{
+			"binding": "WORKER_SELF_REFERENCE",
+			"service": "campusly"
+		}
+	],
+	"images": {
+		"binding": "IMAGES"
+	},
+	"ai": {
+		"binding": "AI"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "campusly-db",
+			"database_id": "local-campusly-db",
+			"migrations_dir": "migrations"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "FILES",
+			"bucket_name": "campusly-files"
+		}
+	],
+	"kv_namespaces": [
+		{
+			"binding": "KV",
+			"id": "campusly-kv-local"
+		}
+	],
+	"vectorize": [
+		{
+			"binding": "VECTORIZE",
+			"index_name": "campusly-knowledge"
+		}
+	],
+	"queues": {
+		"producers": [
+			{
+				"binding": "INGESTION_QUEUE",
+				"queue": "campusly-ingestion"
+			},
+			{
+				"binding": "ANALYTICS_QUEUE",
+				"queue": "campusly-analytics"
+			}
+		]
+	},
+	"triggers": {
+		"crons": ["0 */6 * * *"]
+	},
+	"vars": {
+		"APP_NAME": "Campusly",
+		"APP_URL": "https://campusly.workers.dev"
+	}
+}

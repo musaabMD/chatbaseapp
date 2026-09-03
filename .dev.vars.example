@@ -1,0 +1,7 @@
+NEXTJS_ENV=development
+CAMPUSLY_LOCAL=1
+AUTH_SECRET=replace-with-long-random-secret
+CONTEXT_DEV_API_KEY=
+OPENAI_API_KEY=
+TURNSTILE_SECRET_KEY=
+APP_URL=http://localhost:3010
