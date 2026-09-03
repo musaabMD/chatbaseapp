@@ -171,7 +171,11 @@ function localFallback(messages: ChatMessage[]): GenerateResult {
   const snippet = extractRelevant(knowledgeSection, lastUser);
   if (toolSection) {
     const toolMatch = toolSection.match(/Tool result \([^)]+\):\n([\s\S]+)/);
-    const raw = (toolMatch?.[1] || "").trim().split("\n\nReturn helpful")[0].trim().slice(0, 800);
+    const raw = (toolMatch?.[1] || "")
+      .trim()
+      .split(/\n+Return helpful/)[0]
+      .trim()
+      .slice(0, 800);
     return {
       text: raw
         ? `Here's what I found:\n\n\`\`\`json\n${raw}\n\`\`\`\n\nI can also help with returns or connect you to a human.`

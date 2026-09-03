@@ -18,6 +18,8 @@ import {
   type MessagePart,
   type AgentMessagePayload,
 } from "@/lib/agent/message-parts";
+import { escalateConversation } from "@/lib/agent/escalation";
+import { saveAgentTrace } from "@/lib/agent/traces";
 
 export type ChatCitation = {
   title: string;
@@ -121,10 +123,34 @@ export async function runAgentTurn(input: {
     .bind(userMessageId, conversationId, input.message, nowIso())
     .run();
 
+  // If a human already owns this thread, do not run the AI
+  const convState = await db
+    .prepare(`SELECT automation_state, handoff_status FROM conversations WHERE id = ?`)
+    .bind(conversationId)
+    .first<{ automation_state: string | null; handoff_status: string }>();
+  if (convState?.automation_state === "human" || convState?.handoff_status === "human") {
+    await db
+      .prepare(`UPDATE conversations SET message_count = message_count + 1, last_message_at = ?, updated_at = ? WHERE id = ?`)
+      .bind(nowIso(), nowIso(), conversationId)
+      .run();
+    return {
+      conversationId,
+      messageId: userMessageId,
+      content: "",
+      parts: [],
+      citations: [] as ChatCitation[],
+      structuredUi: null,
+      confidence: 1,
+      latencyMs: 0,
+      model: "human",
+      paused: true,
+      starterQuestions: STARTER_QUESTIONS[agent.use_case] || STARTER_QUESTIONS.custom,
+    };
+  }
+
   // Immediate escalation path (human request / blocked)
   if (preModel.escalate || !preModel.allow) {
     return finalizeEscalation({
-      db,
       conversationId,
       workspaceId: input.workspaceId,
       agentId: input.agentId,
@@ -132,6 +158,9 @@ export async function runAgentTurn(input: {
       reason: preModel.escalate ? "human_request" : "guardrail_block",
       started: Date.now(),
       useCase: agent.use_case,
+      triggerMessageId: userMessageId,
+      customerMessage: input.message,
+      guardrailDecisions: preModel,
     });
   }
 
@@ -163,7 +192,6 @@ export async function runAgentTurn(input: {
       procedureRunId = proc.runId;
       if (proc.shouldEscalate) {
         return finalizeEscalation({
-          db,
           conversationId,
           workspaceId: input.workspaceId,
           agentId: input.agentId,
@@ -171,6 +199,9 @@ export async function runAgentTurn(input: {
           reason: "procedure_escalation",
           started,
           useCase: agent.use_case,
+          triggerMessageId: userMessageId,
+          customerMessage: input.message,
+          procedureSelection: { id: proc.procedure.id, name: proc.procedure.name, step: proc.currentStep },
         });
       }
     }
@@ -277,7 +308,6 @@ export async function runAgentTurn(input: {
   }
   if (postModel.escalate) {
     return finalizeEscalation({
-      db,
       conversationId,
       workspaceId: input.workspaceId,
       agentId: input.agentId,
@@ -285,6 +315,9 @@ export async function runAgentTurn(input: {
       reason: "post_model_escalation",
       started,
       useCase: agent.use_case,
+      triggerMessageId: userMessageId,
+      customerMessage: input.message,
+      guardrailDecisions: { preModel, postModel },
     });
   }
 
@@ -370,6 +403,23 @@ export async function runAgentTurn(input: {
     )
     .run();
 
+  const traceId = await saveAgentTrace({
+    workspaceId: input.workspaceId,
+    agentId: input.agentId,
+    conversationId,
+    messageId: assistantMessageId,
+    input: input.message,
+    intent: intent?.action.slug || classifyTopic(input.message),
+    retrievedContext: chunks.map((c) => ({ id: c.id, title: c.title, score: c.score, url: c.url })),
+    procedureSelection: procedureRunId ? { procedureRunId } : null,
+    llmRun: { model: result.model, provider: result.provider, latencyMs: latency },
+    toolCalls: intent
+      ? [{ name: intent.action.slug, args: intent.args }]
+      : [],
+    guardrailDecisions: { preModel, postModel },
+    finalResponse: replyText,
+  });
+
   return {
     conversationId,
     messageId: assistantMessageId,
@@ -382,12 +432,12 @@ export async function runAgentTurn(input: {
     model: result.model,
     retrieval: chunks,
     procedureRunId,
+    traceId,
     starterQuestions: STARTER_QUESTIONS[agent.use_case] || STARTER_QUESTIONS.custom,
   };
 }
 
 async function finalizeEscalation(input: {
-  db: D1Database;
   conversationId: string;
   workspaceId: string;
   agentId: string;
@@ -395,6 +445,10 @@ async function finalizeEscalation(input: {
   reason: string;
   started: number;
   useCase: string;
+  triggerMessageId?: string;
+  customerMessage?: string;
+  guardrailDecisions?: unknown;
+  procedureSelection?: unknown;
 }) {
   const assistantMessageId = createId("msg");
   const latency = Date.now() - input.started;
@@ -405,7 +459,8 @@ async function finalizeEscalation(input: {
     },
   ]);
 
-  await input.db
+  const db = await getDb();
+  await db
     .prepare(
       `INSERT INTO messages
       (id, conversation_id, role, content, structured_ui, parts, latency_ms, confidence, created_at)
@@ -426,38 +481,57 @@ async function finalizeEscalation(input: {
     )
     .run();
 
-  await input.db
+  await db
     .prepare(
-      `UPDATE conversations
-       SET handoff_status = 'escalated', status = 'open', last_message_at = ?, updated_at = ?,
-           message_count = message_count + 2, metadata = ?
-       WHERE id = ?`,
+      `UPDATE conversations SET message_count = message_count + 2 WHERE id = ?`,
     )
-    .bind(
-      nowIso(),
-      nowIso(),
-      JSON.stringify({ escalation_reason: input.reason }),
-      input.conversationId,
-    )
+    .bind(input.conversationId)
     .run();
 
-  const ticketId = createId("tkt");
-  await input.db
-    .prepare(
-      `INSERT INTO tickets (id, workspace_id, agent_id, conversation_id, subject, status, priority, summary, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'open', 'normal', ?, ?, ?)`,
-    )
-    .bind(
-      ticketId,
-      input.workspaceId,
-      input.agentId,
-      input.conversationId,
-      `Escalation: ${input.reason}`,
-      input.message.slice(0, 500),
-      nowIso(),
-      nowIso(),
-    )
-    .run();
+  let escalationResult: Awaited<ReturnType<typeof escalateConversation>> | null = null;
+  try {
+    escalationResult = await escalateConversation({
+      workspaceId: input.workspaceId,
+      agentId: input.agentId,
+      conversationId: input.conversationId,
+      reason: input.reason,
+      triggerMessageId: input.triggerMessageId,
+      customerMessage: input.customerMessage,
+    });
+  } catch {
+    // Fallback if escalations table missing
+    await db
+      .prepare(
+        `UPDATE conversations
+         SET handoff_status = 'escalated', status = 'open', last_message_at = ?, updated_at = ?,
+             metadata = ?
+         WHERE id = ?`,
+      )
+      .bind(
+        nowIso(),
+        nowIso(),
+        JSON.stringify({ escalation_reason: input.reason }),
+        input.conversationId,
+      )
+      .run();
+  }
+
+  await saveAgentTrace({
+    workspaceId: input.workspaceId,
+    agentId: input.agentId,
+    conversationId: input.conversationId,
+    messageId: assistantMessageId,
+    input: input.customerMessage || input.message,
+    intent: "escalation",
+    procedureSelection: input.procedureSelection,
+    guardrailDecisions: input.guardrailDecisions,
+    escalationDecision: {
+      reason: input.reason,
+      escalationId: escalationResult?.escalationId,
+      summary: escalationResult?.summaryText,
+    },
+    finalResponse: input.message,
+  });
 
   return {
     conversationId: input.conversationId,
@@ -473,7 +547,9 @@ async function finalizeEscalation(input: {
     latencyMs: latency,
     model: "escalation",
     escalated: true,
-    ticketId,
+    ticketId: escalationResult?.ticketId,
+    escalationId: escalationResult?.escalationId,
+    handoffSummary: escalationResult?.summaryText,
     starterQuestions: STARTER_QUESTIONS[input.useCase] || STARTER_QUESTIONS.custom,
   };
 }

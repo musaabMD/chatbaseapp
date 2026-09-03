@@ -60,5 +60,5 @@ export function composeSystemPrompt(input: ComposePromptInput) {
     "Return helpful Markdown. When useful, suggest next steps. Do not invent sources.",
   ];
 
-  return parts.filter(Boolean).join("\n");
+  return parts.filter((p) => p !== "").join("\n");
 }

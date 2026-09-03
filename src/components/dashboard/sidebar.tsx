@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils";
 const items = [
   { href: "/dashboard", label: "Home", icon: Home },
   { href: "/dashboard/agents", label: "Agents", icon: Bot },
-  { href: "/dashboard/inbox", label: "Inbox", icon: Inbox },
+  { href: "/dashboard/inbox", label: "Helpdesk", icon: Inbox },
   { href: "/dashboard/contacts", label: "Contacts", icon: Users },
   { href: "/dashboard/analytics", label: "Analytics", icon: LineChart },
   { href: "/dashboard/integrations", label: "Integrations", icon: Plug },

@@ -3,14 +3,19 @@
 import { useState } from "react";
 import { ChatPanel } from "@/components/chat/chat-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { STARTER_QUESTIONS, type EducationUseCase } from "@/lib/education/templates";
+import { STARTER_QUESTIONS } from "@/lib/agent/templates";
 
 type DebugPayload = {
-  retrieval?: Array<{ title?: string; snippet?: string; score?: number }>;
+  retrieval?: Array<{ title?: string; snippet?: string; score?: number; text?: string }>;
   citations?: Array<{ title: string; url?: string | null }>;
   confidence?: number;
   modelId?: string;
   latencyMs?: number;
+  procedureRunId?: string;
+  traceId?: string;
+  escalated?: boolean;
+  handoffSummary?: string;
+  parts?: Array<{ type: string }>;
 };
 
 export function PlaygroundClient({
@@ -27,8 +32,7 @@ export function PlaygroundClient({
   temperature: number;
 }) {
   const [debugData, setDebugData] = useState<DebugPayload | null>(null);
-  const starters =
-    STARTER_QUESTIONS[useCase as EducationUseCase] || STARTER_QUESTIONS.custom;
+  const starters = STARTER_QUESTIONS[useCase] || STARTER_QUESTIONS.custom;
 
   return (
     <div className="flex h-[calc(100vh-8rem)] min-h-[500px] gap-0 divide-x divide-[var(--border)]">
@@ -70,16 +74,21 @@ export function PlaygroundClient({
               confidence: p.confidence as number | undefined,
               modelId: (p.modelId || p.model) as string | undefined,
               latencyMs: (p.latencyMs || p.latency_ms) as number | undefined,
+              procedureRunId: p.procedureRunId as string | undefined,
+              traceId: p.traceId as string | undefined,
+              escalated: p.escalated as boolean | undefined,
+              handoffSummary: p.handoffSummary as string | undefined,
+              parts: p.parts as DebugPayload["parts"],
             });
           }}
           className="flex-1"
         />
       </div>
 
-      <div className="w-72 shrink-0 overflow-y-auto p-4">
-        <CardTitle className="mb-3 text-sm">Retrieval debug</CardTitle>
+      <div className="w-80 shrink-0 overflow-y-auto p-4">
+        <CardTitle className="mb-3 text-sm">Execution trace</CardTitle>
         {!debugData ? (
-          <p className="text-xs text-[var(--muted)]">Send a message to see retrieval traces.</p>
+          <p className="text-xs text-[var(--muted)]">Send a message to inspect retrieval, tools, and escalation.</p>
         ) : (
           <div className="space-y-3 text-xs">
             {debugData.modelId && (
@@ -100,7 +109,35 @@ export function PlaygroundClient({
                 {debugData.confidence.toFixed(2)}
               </div>
             )}
-            <div className="font-medium">Chunks</div>
+            {debugData.procedureRunId && (
+              <div>
+                <span className="text-[var(--muted)]">Procedure run: </span>
+                <span className="font-mono">{debugData.procedureRunId}</span>
+              </div>
+            )}
+            {debugData.traceId && (
+              <div>
+                <span className="text-[var(--muted)]">Trace: </span>
+                <span className="font-mono">{debugData.traceId}</span>
+              </div>
+            )}
+            {debugData.parts && (
+              <div>
+                <span className="text-[var(--muted)]">Parts: </span>
+                {debugData.parts.map((p) => p.type).join(", ")}
+              </div>
+            )}
+            {debugData.escalated && (
+              <div className="rounded-lg border border-[var(--accent)] bg-[var(--accent)]/20 p-2">
+                Escalated
+                {debugData.handoffSummary && (
+                  <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-[10px]">
+                    {debugData.handoffSummary}
+                  </pre>
+                )}
+              </div>
+            )}
+            <div className="font-medium">Retrieved context</div>
             {(debugData.retrieval || []).length === 0 && (
               <p className="text-[var(--muted)]">No retrieval results</p>
             )}
@@ -113,7 +150,7 @@ export function PlaygroundClient({
                 {chunk.score != null && (
                   <div className="text-[var(--muted)]">Score: {chunk.score.toFixed(3)}</div>
                 )}
-                <div className="mt-1 line-clamp-4 opacity-80">{chunk.snippet}</div>
+                <div className="mt-1 line-clamp-4 opacity-80">{chunk.snippet || chunk.text}</div>
               </div>
             ))}
           </div>

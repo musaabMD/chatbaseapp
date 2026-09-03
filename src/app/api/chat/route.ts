@@ -14,6 +14,9 @@ const schema = z.object({
   channel: z.string().optional(),
   workspaceId: z.string().optional(),
   public: z.boolean().optional(),
+  identity: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+  verifiedIdentity: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+  language: z.string().optional(),
 });
 
 export async function POST(req: Request) {
@@ -56,6 +59,9 @@ export async function POST(req: Request) {
       workspaceId = agent.workspace_id;
     }
 
+    // Verified identity must come from trusted host (in-app identify) — never invent from message text
+    const verifiedIdentity = body.verifiedIdentity || body.identity || null;
+
     const result = await runAgentTurn({
       workspaceId: workspaceId!,
       agentId: body.agentId,
@@ -65,6 +71,8 @@ export async function POST(req: Request) {
       pageUrl: body.pageUrl,
       pageTitle: body.pageTitle,
       channel: body.channel || (body.public ? "widget" : "playground"),
+      verifiedIdentity,
+      language: body.language,
     });
 
     return NextResponse.json(result);
