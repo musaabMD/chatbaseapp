@@ -7,9 +7,9 @@ import { Badge } from "@/components/ui/card";
 export default async function InboxPage({
   searchParams,
 }: {
-  searchParams: Promise<{ filter?: string; topic?: string }>;
+  searchParams: Promise<{ filter?: string; topic?: string; reason?: string }>;
 }) {
-  const { filter, topic } = await searchParams;
+  const { filter, topic, reason } = await searchParams;
   const { workspace, user } = await requireWorkspace();
   const db = await getDb();
 
@@ -22,6 +22,8 @@ export default async function InboxPage({
 
   if (filter === "escalated") {
     sql += ` AND c.handoff_status IN ('escalated', 'human', 'on_hold')`;
+  } else if (filter === "hold") {
+    sql += ` AND (c.automation_state = 'on_hold' OR c.handoff_status = 'on_hold')`;
   } else if (filter === "mine") {
     sql += ` AND c.assigned_to = ?`;
     binds.push(user.id);
@@ -36,6 +38,13 @@ export default async function InboxPage({
   if (topic) {
     sql += ` AND c.topic = ?`;
     binds.push(topic);
+  }
+
+  if (reason) {
+    sql += ` AND EXISTS (
+      SELECT 1 FROM escalations e WHERE e.conversation_id = c.id AND e.reason = ?
+    )`;
+    binds.push(reason);
   }
 
   sql += ` ORDER BY c.last_message_at DESC LIMIT 80`;
@@ -59,6 +68,7 @@ export default async function InboxPage({
   const filters = [
     { id: "all", label: "Inbox" },
     { id: "escalated", label: "Escalated" },
+    { id: "hold", label: "On hold" },
     { id: "mine", label: "Assigned to me" },
     { id: "unassigned", label: "Unassigned" },
     { id: "open", label: "Open" },

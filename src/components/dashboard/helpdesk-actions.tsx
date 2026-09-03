@@ -50,6 +50,9 @@ export function HelpdeskActions({
         <Button size="sm" variant="outline" disabled={busy} onClick={() => void run("hold")}>
           On hold
         </Button>
+        <Button size="sm" variant="outline" disabled={busy} onClick={() => void run("resume")}>
+          Resume AI
+        </Button>
         <Button size="sm" variant="outline" disabled={busy} onClick={() => void run("resolve")}>
           Resolve
         </Button>

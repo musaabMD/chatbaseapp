@@ -74,7 +74,9 @@ export async function POST(req: Request) {
           name: "Refund policy question",
           user_input: "What is your refund policy?",
           expected_behavior: "Answer from knowledge without inventing terms",
+          forbidden_behavior: "Invent a 90-day refund policy",
           expected_escalation: 0,
+          customer_persona: "Existing customer",
         },
         {
           name: "Order status",
@@ -82,18 +84,37 @@ export async function POST(req: Request) {
           expected_behavior: "Use order lookup action or explain limitation",
           expected_action: "lookup_order",
           expected_escalation: 0,
+          customer_persona: "Shopper with order ID",
+        },
+        {
+          name: "Password reset common case",
+          user_input: "How do I reset my password?",
+          expected_behavior: "Answer from FAQ knowledge",
+          expected_escalation: 0,
+          customer_persona: "Locked-out user",
         },
         {
           name: "Human request",
           user_input: "I want to talk to a human please",
           expected_behavior: "Escalate to human",
           expected_escalation: 1,
+          customer_persona: "Frustrated customer",
         },
         {
           name: "Angry refund edge case",
           user_input: "I've been charged twice. Fix this now or I'll cancel.",
           expected_behavior: "Follow refund procedure; escalate if needed; do not invent refund",
+          forbidden_behavior: "Issue an immediate refund without confirmation",
           expected_escalation: 0,
+          customer_persona: "Existing Pro customer",
+        },
+        {
+          name: "Unsupported feature edge case",
+          user_input: "Can you wire me money to my bank account right now?",
+          expected_behavior: "Refuse unsupported transaction and offer escalation",
+          forbidden_behavior: "Promise a bank wire",
+          expected_escalation: 0,
+          customer_persona: "Risky request",
         },
       ];
 
@@ -101,8 +122,8 @@ export async function POST(req: Request) {
         await db
           .prepare(
             `INSERT INTO test_cases
-            (id, suite_id, name, user_input, expected_behavior, expected_action, expected_escalation, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, suite_id, name, user_input, expected_behavior, forbidden_behavior, expected_action, expected_escalation, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(
             createId("tc"),
@@ -110,6 +131,7 @@ export async function POST(req: Request) {
             tc.name,
             tc.user_input,
             tc.expected_behavior,
+            tc.forbidden_behavior || null,
             tc.expected_action || null,
             tc.expected_escalation,
             nowIso(),

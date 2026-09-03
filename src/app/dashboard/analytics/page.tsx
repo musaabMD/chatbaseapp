@@ -79,6 +79,45 @@ export default async function WorkspaceAnalyticsPage({
       .all<{ reason: string; c: number }>(),
   ]);
 
+  const prevSince = new Date(Date.now() - days * 2 * 24 * 60 * 60 * 1000).toISOString();
+  const mid = since;
+
+  const [csatRow, prevTopics, currTopics] = await Promise.all([
+    db
+      .prepare(
+        `SELECT AVG(csat) as avg_csat, COUNT(csat) as rated
+         FROM conversations WHERE workspace_id = ? AND created_at >= ? AND csat IS NOT NULL`,
+      )
+      .bind(workspace.id, since)
+      .first<{ avg_csat: number | null; rated: number }>(),
+    db
+      .prepare(
+        `SELECT COALESCE(topic,'General') as topic, COUNT(*) as c
+         FROM conversations WHERE workspace_id = ? AND created_at >= ? AND created_at < ?
+         GROUP BY topic`,
+      )
+      .bind(workspace.id, prevSince, mid)
+      .all<{ topic: string; c: number }>(),
+    db
+      .prepare(
+        `SELECT COALESCE(topic,'General') as topic, COUNT(*) as c
+         FROM conversations WHERE workspace_id = ? AND created_at >= ?
+         GROUP BY topic`,
+      )
+      .bind(workspace.id, mid)
+      .all<{ topic: string; c: number }>(),
+  ]);
+
+  const prevMap = new Map((prevTopics.results || []).map((t) => [t.topic, t.c]));
+  const trends = (currTopics.results || [])
+    .map((t) => {
+      const prev = prevMap.get(t.topic) || 0;
+      const delta = prev === 0 ? (t.c > 0 ? 100 : 0) : Math.round(((t.c - prev) / prev) * 100);
+      return { topic: t.topic, current: t.c, previous: prev, delta };
+    })
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, 6);
+
   const gaps = (await listKnowledgeGaps(workspace.id, undefined, 8)) as Array<{
     id: string;
     question: string;
@@ -100,13 +139,22 @@ export default async function WorkspaceAnalyticsPage({
   const resolutionRate = totalConv
     ? Math.round(((aiResolved?.c ?? 0) / totalConv) * 100)
     : 0;
+  const avgMessages = totalConv ? Math.round(((messages?.c ?? 0) / totalConv) * 10) / 10 : 0;
 
   const stats = [
     { label: "Conversations", value: totalConv },
     { label: "Messages", value: messages?.c ?? 0 },
+    { label: "Avg messages / chat", value: avgMessages },
     { label: "Automation rate", value: `${automationRate}%` },
     { label: "Escalation rate", value: `${escalationRate}%` },
     { label: "AI resolution rate", value: `${resolutionRate}%` },
+    {
+      label: "CSAT",
+      value:
+        csatRow?.avg_csat != null
+          ? `${Number(csatRow.avg_csat).toFixed(1)} (${csatRow.rated})`
+          : "—",
+    },
     { label: "Leads", value: leads?.c ?? 0 },
   ];
 
@@ -186,6 +234,22 @@ export default async function WorkspaceAnalyticsPage({
                 <span className="font-medium">{row.c}</span>
               </div>
             ))}
+            {trends.length > 0 && (
+              <div className="mt-4 border-t border-[var(--border)] pt-3">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+                  Period-over-period
+                </div>
+                {trends.map((t) => (
+                  <div key={t.topic} className="flex justify-between text-sm">
+                    <span>{t.topic}</span>
+                    <span className={t.delta > 0 ? "text-amber-700" : t.delta < 0 ? "text-emerald-700" : ""}>
+                      {t.delta > 0 ? "+" : ""}
+                      {t.delta}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -216,7 +280,12 @@ export default async function WorkspaceAnalyticsPage({
             )}
             {(escalationReasons.results || []).map((row) => (
               <div key={row.reason} className="flex justify-between text-sm">
-                <span>{row.reason}</span>
+                <Link
+                  href={`/dashboard/inbox?filter=escalated&reason=${encodeURIComponent(row.reason)}`}
+                  className="hover:underline"
+                >
+                  {row.reason}
+                </Link>
                 <span className="font-medium">{row.c}</span>
               </div>
             ))}

@@ -78,6 +78,51 @@ export async function runAgentTurn(input: {
 
   if (!agent) throw new Error("Agent not found");
 
+  // Production channels use the published snapshot; playground/tests use live draft config
+  const productionChannels = new Set([
+    "widget",
+    "hosted",
+    "email",
+    "whatsapp",
+    "messenger",
+    "instagram",
+    "slack",
+    "voice",
+    "in_app",
+    "api",
+  ]);
+  const usePublished = productionChannels.has(input.channel || "") && Boolean(agent.published_version_id);
+  if (usePublished && agent.published_version_id) {
+    const version = await db
+      .prepare(`SELECT snapshot FROM agent_versions WHERE id = ?`)
+      .bind(agent.published_version_id)
+      .first<{ snapshot: string }>();
+    const snap = safeJsonParse<{
+      instructions?: string | null;
+      brand_voice?: string | null;
+      model_id?: string;
+      model_provider?: string;
+      fallback_model_id?: string | null;
+      temperature?: number;
+      max_tokens?: number;
+      knowledge_mode?: string;
+      show_citations?: number;
+      guardrails?: string | null;
+      use_case?: string;
+    }>(version?.snapshot, {});
+    if (snap.instructions !== undefined) agent.instructions = snap.instructions ?? agent.instructions;
+    if (snap.brand_voice !== undefined) agent.brand_voice = snap.brand_voice ?? agent.brand_voice;
+    if (snap.model_id) agent.model_id = snap.model_id;
+    if (snap.model_provider) agent.model_provider = snap.model_provider;
+    if (snap.fallback_model_id !== undefined) agent.fallback_model_id = snap.fallback_model_id ?? null;
+    if (snap.temperature != null) agent.temperature = snap.temperature;
+    if (snap.max_tokens != null) agent.max_tokens = snap.max_tokens;
+    if (snap.knowledge_mode) agent.knowledge_mode = snap.knowledge_mode;
+    if (snap.show_citations != null) agent.show_citations = snap.show_citations;
+    if (snap.guardrails !== undefined) agent.guardrails = snap.guardrails ?? null;
+    if (snap.use_case) agent.use_case = snap.use_case;
+  }
+
   const rules = parseGuardrails(agent.guardrails);
   const preModel = evaluateGuardrails({
     rules,
@@ -126,12 +171,17 @@ export async function runAgentTurn(input: {
     .bind(userMessageId, conversationId, input.message, nowIso())
     .run();
 
-  // If a human already owns this thread, do not run the AI
+  // If a human already owns this thread (or on hold), do not run the AI — same conversation continues
   const convState = await db
     .prepare(`SELECT automation_state, handoff_status FROM conversations WHERE id = ?`)
     .bind(conversationId)
     .first<{ automation_state: string | null; handoff_status: string }>();
-  if (convState?.automation_state === "human" || convState?.handoff_status === "human") {
+  const pausedStates = new Set(["human", "on_hold", "escalating"]);
+  const pausedHandoffs = new Set(["human", "on_hold"]);
+  if (
+    pausedStates.has(convState?.automation_state || "") ||
+    pausedHandoffs.has(convState?.handoff_status || "")
+  ) {
     await db
       .prepare(`UPDATE conversations SET message_count = message_count + 1, last_message_at = ?, updated_at = ? WHERE id = ?`)
       .bind(nowIso(), nowIso(), conversationId)
@@ -147,6 +197,7 @@ export async function runAgentTurn(input: {
       latencyMs: 0,
       model: "human",
       paused: true,
+      automationState: convState?.automation_state || convState?.handoff_status,
       starterQuestions: STARTER_QUESTIONS[agent.use_case] || STARTER_QUESTIONS.custom,
     };
   }
@@ -326,6 +377,25 @@ export async function runAgentTurn(input: {
       triggerMessageId: userMessageId,
       customerMessage: input.message,
       guardrailDecisions: { preModel, postModel },
+    });
+  }
+
+  const confidencePreview = chunks.length
+    ? Math.min(0.95, 0.45 + (chunks[0]?.score || 0) * 0.2)
+    : 0.25;
+  if (agent.knowledge_mode === "strict" && chunks.length === 0 && confidencePreview < 0.35) {
+    return finalizeEscalation({
+      conversationId,
+      workspaceId: input.workspaceId,
+      agentId: input.agentId,
+      message:
+        "I don't have enough verified information to answer confidently. Connecting you with a human teammate who can help.",
+      reason: "low_confidence",
+      started,
+      useCase: agent.use_case,
+      triggerMessageId: userMessageId,
+      customerMessage: input.message,
+      guardrailDecisions: { preModel, postModel, lowConfidence: true },
     });
   }
 

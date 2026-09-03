@@ -11,7 +11,7 @@ export async function POST(req: Request) {
     const body = z
       .object({
         conversationId: z.string(),
-        action: z.enum(["reply", "takeover", "hold", "resolve", "note"]),
+        action: z.enum(["reply", "takeover", "hold", "resolve", "note", "resume"]),
         content: z.string().optional(),
       })
       .parse(await req.json());
@@ -47,6 +47,27 @@ export async function POST(req: Request) {
         .bind(body.conversationId)
         .run();
       return NextResponse.json({ ok: true, automation_state: "on_hold" });
+    }
+
+    if (body.action === "resume") {
+      await db
+        .prepare(
+          `UPDATE conversations
+           SET automation_state = 'auto',
+               handoff_status = 'ai',
+               assigned_to = NULL,
+               updated_at = ?
+           WHERE id = ? AND workspace_id = ?`,
+        )
+        .bind(nowIso(), body.conversationId, workspace.id)
+        .run();
+      await db
+        .prepare(
+          `UPDATE escalations SET status = 'closed', resolved_at = ? WHERE conversation_id = ? AND status IN ('new', 'on_you', 'on_hold')`,
+        )
+        .bind(nowIso(), body.conversationId)
+        .run();
+      return NextResponse.json({ ok: true, automation_state: "auto" });
     }
 
     if (body.action === "resolve") {

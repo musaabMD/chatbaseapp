@@ -38,6 +38,10 @@ export default async function InboxDetailPage({
       verified_identity: string | null;
       resolution: string | null;
       metadata: string | null;
+      sentiment: string | null;
+      language: string | null;
+      csat: number | null;
+      contact_id: string | null;
     }>();
 
   if (!conversation) notFound();
@@ -93,7 +97,17 @@ export default async function InboxDetailPage({
     .bind(id)
     .all<{ id: string; status: string; current_step: number; started_at: string }>();
 
+  const priorTickets = await db
+    .prepare(
+      `SELECT id, subject, status, created_at FROM tickets
+       WHERE workspace_id = ? AND conversation_id != ?
+       ORDER BY created_at DESC LIMIT 5`,
+    )
+    .bind(workspace.id, id)
+    .all<{ id: string; subject: string; status: string; created_at: string }>();
+
   const identity = safeJsonParse<Record<string, unknown>>(conversation.verified_identity, {});
+  const metadata = safeJsonParse<Record<string, unknown>>(conversation.metadata, {});
 
   return (
     <div className="space-y-6 p-6 md:p-8">
@@ -156,6 +170,22 @@ export default async function InboxDetailPage({
               <CardTitle className="text-base">Customer context</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
+              <div className="flex justify-between gap-2">
+                <span className="text-[var(--muted)]">topic</span>
+                <span>{conversation.topic || "General"}</span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-[var(--muted)]">sentiment</span>
+                <span>{conversation.sentiment || "neutral"}</span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-[var(--muted)]">language</span>
+                <span>{conversation.language || "—"}</span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-[var(--muted)]">csat</span>
+                <span>{conversation.csat ?? "—"}</span>
+              </div>
               {Object.keys(identity).length === 0 ? (
                 <p className="text-[var(--muted)]">No verified identity on this conversation.</p>
               ) : (
@@ -166,10 +196,32 @@ export default async function InboxDetailPage({
                   </div>
                 ))
               )}
+              {Object.keys(metadata).length > 0 && (
+                <div className="pt-2">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Attributes</div>
+                  {Object.entries(metadata).map(([k, v]) => (
+                    <div key={k} className="flex justify-between gap-2 text-xs">
+                      <span className="text-[var(--muted)]">{k}</span>
+                      <span className="font-mono">{typeof v === "string" ? v : JSON.stringify(v)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {conversation.page_url && (
                 <p className="pt-2 text-xs text-[var(--muted)]">
                   Page: {conversation.page_title || conversation.page_url}
                 </p>
+              )}
+              {(priorTickets.results || []).length > 0 && (
+                <div className="pt-2">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Prior tickets</div>
+                  {(priorTickets.results || []).map((t) => (
+                    <div key={t.id} className="flex justify-between gap-2 text-xs">
+                      <span className="line-clamp-1">{t.subject}</span>
+                      <span className="text-[var(--muted)]">{t.status}</span>
+                    </div>
+                  ))}
+                </div>
               )}
             </CardContent>
           </Card>
